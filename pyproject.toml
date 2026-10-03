@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "pitchviz"
 version = "0.1.0"
 description = "Pitch visualization API and rendering pipeline"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.115.12",
     "uvicorn[standard]==0.34.3",
@@ -25,11 +25,18 @@ render = [
     "manim==0.20.0",
     "ManimPango==0.6.1",
     "av==16.1.0",
-    "matplotlib==3.10.8",
-    "pillow==12.1.1",
     "boto3==1.42.64",
     "PyGithub==2.8.1",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "respx",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

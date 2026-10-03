@@ -107,7 +107,7 @@ pip install -e ".[render]"
 python -m pitchviz.render.run -d "2026-02-24" "Ranger Suarez" "high_quality"
 ```
 
-Run `python -m pitchviz.render.run` with no arguments to see all available options (single pitch type, splits, daily graphics, etc.).
+Run `python -m pitchviz.render.run` with no arguments to see all available options (single pitch type, splits, per-pitcher daily renders, etc.).
 
 ## How rendering works
 

@@ -22,57 +22,6 @@ EVENT_MAP = {
 
 # -----FILTERS----------
 
-def high_heat_filter(df: pd.DataFrame) -> pd.DataFrame:
-    columns_to_keep = [
-            'pitcher',
-            'pitch_type',
-            'pitch_name',
-            'release_spin_rate',
-            'pfx_x', 'pfx_z', # HB is represented by pfx_x and iVB is represented by pfx_z
-            #'estimated_woba_using_speedangle', NOTE Let's bring this back later, not great with spring training data I guess
-            'release_speed'
-        ]
-    return df[columns_to_keep].dropna().sort_values('release_speed', ascending=False).head(5)
-
-def absolute_missiles_filter(df: pd.DataFrame) -> pd.DataFrame:
-
-    columns_to_keep = ['launch_speed',
-                   'launch_angle',
-                   'batter',
-                   'events',
-                   'bb_type',
-                   'hit_distance_sc',
-                   'estimated_ba_using_speedangle',
-                   ]
-
-    df = df[columns_to_keep]
-
-    df = df[df['bb_type'] == 'fly_ball']
-
-    df = df.drop('bb_type', axis=1)
-
-    df['events'] = df['events'].map(EVENT_MAP)
-
-    return df.sort_values('launch_speed', ascending=False).head(5)
-
-def big_five_filter(df: pd.DataFrame) -> pd.DataFrame:
-
-    columns_to_keep = [
-                   'batter',
-                   'pitcher',
-                   'delta_home_win_exp',
-                   'delta_run_exp',
-                   "events",
-                   "inning",
-                   'des',
-                   ]
-
-    df = df[columns_to_keep]
-
-    df['events'] = df['events'].map(EVENT_MAP)
-
-    return df.sort_values('delta_home_win_exp', ascending=False).head(5)
-
 def pitches_filter(df: pd.DataFrame):
     columns_to_keep = [
             "vx0", "vy0", "vz0",
@@ -131,3 +80,18 @@ def pitches_filter_by_name(df: pd.DataFrame, pitch_name: str):
     df = df[columns_to_keep].dropna()
 
     return df[df['pitch_type'] == pitch_name]
+
+def location_filter(df: pd.DataFrame, pitch_type: str | None = None, stand: str | None = None) -> pd.DataFrame:
+    columns_to_keep = [
+            "pitch_type", "plate_x", "plate_z", "zone",
+            "sz_top", "sz_bot", "stand", "description",
+        ]
+
+    df = df[columns_to_keep].dropna(subset=["plate_x", "plate_z"])
+
+    if pitch_type:
+        df = df[df["pitch_type"] == pitch_type]
+    if stand:
+        df = df[df["stand"] == stand]
+
+    return df

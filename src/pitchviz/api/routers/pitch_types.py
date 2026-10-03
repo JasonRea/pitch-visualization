@@ -1,9 +1,7 @@
-import asyncio
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from pitchviz.config import PITCH_COLORS, PITCH_NAMES
-from pitchviz.data.fetch import pitch_data
+from pitchviz.api.deps import get_outing_df
 from pitchviz.api.state import pitch_type_cache
 
 router = APIRouter()
@@ -19,12 +17,11 @@ async def get_pitch_types(pitcher_name: str, date: str):
     if cache_key in pitch_type_cache:
         return pitch_type_cache[cache_key]
 
-    loop = asyncio.get_event_loop()
+    df = await get_outing_df(pitcher_name, date)
 
-    def _fetch() -> list[dict]:
-        df = pitch_data(date, pitcher_name)
-        if df.empty:
-            return []
+    if df.empty:
+        result = []
+    else:
         rows = (
             df[["pitch_type", "pitch_name"]]
             .dropna()
@@ -40,12 +37,6 @@ async def get_pitch_types(pitcher_name: str, date: str):
                 "count": int((df["pitch_type"] == code).sum()),
             })
         result.sort(key=lambda x: -x["count"])
-        return result
-
-    try:
-        result = await loop.run_in_executor(None, _fetch)
-    except Exception as e:
-        raise HTTPException(500, detail=f"Failed to fetch pitch data: {e}")
 
     pitch_type_cache[cache_key] = result
     return result

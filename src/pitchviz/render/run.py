@@ -16,14 +16,6 @@ def print_usage():
     print("Options:")
     print("  -d <date> <pitcher> [quality]                   Render all pitches from an outing on the given day")
     print('                                                  Example: python -m pitchviz.render.run -d "2026-02-24" "Ranger Suarez" "high_quality"')
-    print("  -h <date>                                       Generate and save the High Heat graphic for the given day")
-    print('                                                  Example: python -m pitchviz.render.run -h "2026-02-24"')
-    print("  -m <date>                                       Generate and save the Absolute Missiles graphic for the given day")
-    print('                                                  Example: python -m pitchviz.render.run -m "2026-02-24"')
-    print("  -w <date>                                       Generate and save the Wheeeee! graphic for the given day")
-    print('                                                  Example: python -m pitchviz.render.run -w "2026-02-24"')
-    print("  -a <date>                                       Generate and save all three graphics for the given day")
-    print('                                                  Example: python -m pitchviz.render.run -a "2026-02-24"')
     print("  -dp <date> <pitcher> <pitch_type> [quality]     Render a single pitch type from an outing")
     print('                                                  Example: python -m pitchviz.render.run -dp "2026-02-24" "Ranger Suarez" "FF" "high_quality"')
     print("  -dA <date> [quality]                            Render all splits (all/vs-left/vs-right + per pitch type) for every pitcher on the given day")
@@ -127,20 +119,6 @@ if __name__ == '__main__':
                             quality=arg_2,
                             filename=f"{pitcher_name} {arg_1} {code}",
                         )
-
-            case "-h":
-                builder.buildp(date=arg_1, config=VizualizationBuilder._high_heat_config())
-
-            case "-m":
-                builder.buildp(date=arg_1, config=VizualizationBuilder._absolute_missiles_config())
-
-            case "-w":
-                builder.buildp(date=arg_1, config=VizualizationBuilder._big_five_config())
-
-            case "-a":
-                builder.buildp(date=arg_1, config=VizualizationBuilder._high_heat_config())
-                builder.buildp(date=arg_1, config=VizualizationBuilder._absolute_missiles_config())
-                builder.buildp(date=arg_1, config=VizualizationBuilder._big_five_config())
 
             case _:
                 print_usage()
