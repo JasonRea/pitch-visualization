@@ -25,7 +25,7 @@ src/pitchviz/
 
 ```bash
 pip install -e .            # API-only dependencies
-pip install -e ".[render]"  # + manim/matplotlib/boto3/PyGithub for rendering
+pip install -e ".[render]"  # + manim/boto3/PyGithub for rendering
 ```
 
 ## Endpoints
@@ -35,8 +35,13 @@ pip install -e ".[render]"  # + manim/matplotlib/boto3/PyGithub for rendering
 | `GET` | `/pitchers?q={name}` | Search active MLB pitchers by name (min 2 chars) |
 | `GET` | `/dates?pitcher_name={name}&season={year}` | Get dates the pitcher appeared in games |
 | `GET` | `/pitch-types?pitcher_name={name}&date={YYYY-MM-DD}` | Get pitch types thrown in a specific outing |
+| `GET` | `/movement?pitcher_name={name}&date={YYYY-MM-DD}` | Per-pitch and summary movement stats (velo, horizontal/induced vertical break) for an outing |
+| `GET` | `/heatmap?pitcher_name={name}&date={YYYY-MM-DD}&pitch_type={code}&stand={L\|R}` | Pitch locations for a strike-zone heatmap, optionally filtered by pitch type and/or batter side |
+| `GET` | `/at-bats?pitcher_name={name}&date={YYYY-MM-DD}` | Full at-bat-by-at-bat pitch sequences for an outing, with final outcomes |
 | `POST` | `/render` | Trigger a GitHub Actions render job |
 | `GET` | `/render/{run_id}` | Poll render job status |
+
+`/pitch-types`, `/movement`, `/heatmap`, and `/at-bats` all share a 1-hour in-process cache keyed on `pitcher_name:date`, so hitting more than one of them for the same outing only fetches Statcast data once.
 
 Interactive docs available at `/docs` when the server is running.
 
@@ -96,7 +101,7 @@ API is available at `http://localhost:8000`.
 
 ## Deploying to Render.com
 
-A `render.yaml` at the repo root can auto-configure a Render.com web service (build command `pip install -e .`, start command `uvicorn pitchviz.api.main:app --host 0.0.0.0 --port $PORT`). Set the 6 env vars above in the Render dashboard (Dashboard → your service → Environment).
+Create a web service pointing at this repo with build command `pip install -e .` and start command `uvicorn pitchviz.api.main:app --host 0.0.0.0 --port $PORT`. Set the env vars above in the Render dashboard (Dashboard → your service → Environment).
 
 The free tier spins down after 15 minutes of inactivity. The first request after idle takes ~30 seconds to cold-start.
 
