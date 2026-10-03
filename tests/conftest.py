@@ -1,13 +1,3 @@
-import os
-
-# Must happen before any `pitchviz.api.*` import anywhere in the test session —
-# api/config.py reads these via os.environ[...] (no default) at import time.
-os.environ.setdefault("GITHUB_TOKEN", "test-token")
-os.environ.setdefault("GITHUB_OWNER", "test-owner")
-os.environ.setdefault("GITHUB_REPO", "test-repo")
-os.environ.setdefault("DO_SPACES_REGION", "nyc3")
-os.environ.setdefault("DO_SPACES_BUCKET", "test-bucket")
-
 from pathlib import Path
 
 import pandas as pd
@@ -38,12 +28,10 @@ def _clear_api_caches():
     state.players_cache.clear()
     state.pitch_type_cache.clear()
     state.outing_cache.clear()
-    state.render_jobs.clear()
     yield
     state.players_cache.clear()
     state.pitch_type_cache.clear()
     state.outing_cache.clear()
-    state.render_jobs.clear()
 
 
 @pytest.fixture

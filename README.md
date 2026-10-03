@@ -9,15 +9,14 @@ src/pitchviz/
 ├── config.py       # shared, environment-independent constants (pitch colors/names)
 ├── api/            # FastAPI app
 │   ├── main.py     # app factory, CORS, router registration
-│   ├── config.py   # API-only env vars (GitHub, DO Spaces, CORS)
-│   ├── state.py    # in-process caches and render job store
-│   └── routers/    # one module per resource (pitchers, dates, pitch_types, render)
+│   ├── state.py    # in-process caches
+│   └── routers/    # one module per resource (pitchers, dates, pitch_types, movement, heatmap, at_bats)
 ├── data/           # Statcast/MLB data fetching and dataframe filters
 │   ├── fetch.py
 │   └── filters.py
 └── render/         # Manim scene building and the render CLI
     ├── builder.py
-    ├── assets.py   # headshots/bios/team logos (Pillow-dependent)
+    ├── assets.py   # player bio lookups
     └── run.py
 ```
 
@@ -25,7 +24,7 @@ src/pitchviz/
 
 ```bash
 pip install -e .            # API-only dependencies
-pip install -e ".[render]"  # + manim/boto3/PyGithub for rendering
+pip install -e ".[render]"  # + manim for local rendering
 ```
 
 ## Endpoints
@@ -38,72 +37,19 @@ pip install -e ".[render]"  # + manim/boto3/PyGithub for rendering
 | `GET` | `/movement?pitcher_name={name}&date={YYYY-MM-DD}` | Per-pitch and summary movement stats (velo, horizontal/induced vertical break) for an outing |
 | `GET` | `/heatmap?pitcher_name={name}&date={YYYY-MM-DD}&pitch_type={code}&stand={L\|R}` | Pitch locations for a strike-zone heatmap, optionally filtered by pitch type and/or batter side |
 | `GET` | `/at-bats?pitcher_name={name}&date={YYYY-MM-DD}` | Full at-bat-by-at-bat pitch sequences for an outing, with final outcomes |
-| `POST` | `/render` | Trigger a GitHub Actions render job |
-| `GET` | `/render/{run_id}` | Poll render job status |
 
 `/pitch-types`, `/movement`, `/heatmap`, and `/at-bats` all share a 1-hour in-process cache keyed on `pitcher_name:date`, so hitting more than one of them for the same outing only fetches Statcast data once.
 
 Interactive docs available at `/docs` when the server is running.
 
-### POST /render — request body
-
-```json
-{
-  "pitcher_name": "Ranger Suarez",
-  "date": "2026-04-18",
-  "split": "all",
-  "pitch_type": "SL",
-  "quality": "low_quality"
-}
-```
-
-- `split`: `"all"` | `"left"` | `"right"`
-- `pitch_type`: 2-letter Statcast code (e.g. `"FF"`, `"SL"`) or `""` for all pitch types
-- `quality`: `"low_quality"` | `"medium_quality"` | `"high_quality"` | `"fourk_quality"`
-
-Returns `{ "run_id": 12345 }`. Poll `/render/{run_id}` every 10s until `status` is `"completed"` or `"failed"`. On success, `output_url` contains the public MP4 link.
-
 ## Running the API locally
 
 ```bash
 pip install -e .
-```
-
-Set environment variables (see `.env.example`):
-
-```bash
-export GITHUB_TOKEN=ghp_...          # Fine-grained PAT with Actions: write
-export GITHUB_OWNER=your_username
-export GITHUB_REPO=pitch-vizualization
-export DO_SPACES_REGION=nyc3
-export DO_SPACES_BUCKET=your_bucket
-export ALLOWED_ORIGIN=http://localhost:5173
-```
-
-Start the server:
-
-```bash
 uvicorn pitchviz.api.main:app --reload
 ```
 
-API is available at `http://localhost:8000`.
-
-## Environment variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `GITHUB_TOKEN` | Yes | GitHub PAT with `Actions: write` permission |
-| `GITHUB_OWNER` | Yes | GitHub username or org that owns the repo |
-| `GITHUB_REPO` | Yes | Repository name (e.g. `pitch-vizualization`) |
-| `DO_SPACES_REGION` | Yes | DigitalOcean Spaces region (e.g. `nyc3`) |
-| `DO_SPACES_BUCKET` | Yes | Spaces bucket name |
-| `ALLOWED_ORIGIN` | No | CORS-allowed origin for API clients (defaults to `*`) |
-
-## Deploying to Render.com
-
-Create a web service pointing at this repo with build command `pip install -e .` and start command `uvicorn pitchviz.api.main:app --host 0.0.0.0 --port $PORT`. Set the env vars above in the Render dashboard (Dashboard → your service → Environment).
-
-The free tier spins down after 15 minutes of inactivity. The first request after idle takes ~30 seconds to cold-start.
+API is available at `http://localhost:8000`. No environment variables are required; `ALLOWED_ORIGIN` optionally restricts CORS (defaults to `*`).
 
 ## Rendering pitches from the CLI
 
@@ -112,22 +58,12 @@ pip install -e ".[render]"
 python -m pitchviz.render.run -d "2026-02-24" "Ranger Suarez" "high_quality"
 ```
 
-Run `python -m pitchviz.render.run` with no arguments to see all available options (single pitch type, splits, per-pitcher daily renders, etc.).
-
-## How rendering works
-
-`POST /render` dispatches the `.github/workflows/render_trajectory.yml` workflow via the GitHub API. It then polls for up to 12 seconds to find the new run ID and returns it. The run input is stored in memory so the output URL can be reconstructed when the job finishes.
-
-Output MP4s are uploaded to DigitalOcean Spaces at:
-```
-vizualizations/trajectories/{date}/{pitcher_slug}-{split}-{pitch_type}.mp4
-```
-
-The URL is deterministic from the inputs, so no callback from Actions back to the API is needed.
+Run `python -m pitchviz.render.run` with no arguments to see all available options (single pitch type, splits, per-pitcher daily renders, etc.). Rendering runs entirely locally via Manim and writes output to disk — no external services involved.
 
 ## Caveats
 
-- **Render.com cold starts** — first request after 15 min idle is slow (~30s).
-- **In-memory job store** — `render_jobs` (in `pitchviz.api.state`) is lost on server restart. If the server restarts between `/render` and `/render/{run_id}`, the status endpoint won't be able to construct `output_url` (it will return `null` even on success).
 - **`/pitch-types` latency** — calls Statcast via pybaseball, takes 3–8 seconds. Results are cached for 1 hour per pitcher+date pair.
-- **GitHub Actions PAT** — the token needs `Actions: write` on the target repo. A fine-grained PAT scoped to just that repo is recommended over a classic PAT.
+
+## Deployment
+
+Not yet set up — this project currently runs locally only. Hosting and automated/remote rendering are deliberately out of scope for now and will be revisited as a separate decision.

@@ -7,6 +7,3 @@ pitch_type_cache: TTLCache = TTLCache(maxsize=500, ttl=3600)
 # Raw per-outing Statcast dataframe, shared across /pitch-types, /movement,
 # /heatmap, and /at-bats so a single outing is only fetched once.
 outing_cache: TTLCache = TTLCache(maxsize=200, ttl=3600)
-
-# In-memory run inputs (survives for the lifetime of the process)
-render_jobs: dict[int, dict] = {}
