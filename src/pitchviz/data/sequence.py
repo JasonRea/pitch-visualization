@@ -41,6 +41,7 @@ def at_bat_sequences(df: pd.DataFrame) -> list[dict]:
             "inning":        int(first["inning"]),
             "inning_topbot": first["inning_topbot"],
             "stand":         first["stand"],
+            "batter":        int(first["batter"]),
             "final_outcome": final_outcome,
             "pitches":       pitches,
         })

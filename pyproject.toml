@@ -25,6 +25,9 @@ render = [
     "manim==0.20.0",
     "ManimPango==0.6.1",
     "av==16.1.0",
+    "questionary==2.1.1",
+    "rich==14.2.0",
+    "rapidfuzz==3.14.3",
 ]
 dev = [
     "pytest",

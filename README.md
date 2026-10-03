@@ -55,10 +55,18 @@ API is available at `http://localhost:8000`. No environment variables are requir
 
 ```bash
 pip install -e ".[render]"
+python -m pitchviz.render.run
+```
+
+Running with no arguments launches an interactive TUI: search for a pitcher, pick one of their outings, choose what to render (the full outing, a specific at-bat, or a hand-picked set of pitches to compare pitch tunneling), then pick render quality.
+
+For scripting, the original flag-based interface still works unchanged:
+
+```bash
 python -m pitchviz.render.run -d "2026-02-24" "Ranger Suarez" "high_quality"
 ```
 
-Run `python -m pitchviz.render.run` with no arguments to see all available options (single pitch type, splits, per-pitcher daily renders, etc.). Rendering runs entirely locally via Manim and writes output to disk — no external services involved.
+Pass any unrecognized flag to see all available options (single pitch type, splits, per-pitcher daily renders, etc.). Rendering runs entirely locally via Manim and writes output to disk — no external services involved.
 
 ## Caveats
 

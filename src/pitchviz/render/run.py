@@ -30,6 +30,11 @@ if __name__ == '__main__':
     arg_3 = sys.argv[4] if len(sys.argv) > 4 else None
     arg_4 = sys.argv[5] if len(sys.argv) > 5 else None
 
+    if flag is None:
+        from pitchviz.render.tui import run_tui
+        run_tui()
+        sys.exit(0)
+
     builder = VizualizationBuilder()
 
     try:

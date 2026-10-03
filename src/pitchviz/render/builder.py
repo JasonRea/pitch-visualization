@@ -76,6 +76,9 @@ class VizualizationBuilder:
             pitch_name = df["pitch_name"].iloc[0] if not df.empty else filter._pitch_type
             self._filter_label = pitch_name
             self._filter_label_color = ManimColor(PITCH_COLORS.get(filter._pitch_type, PITCH_COLORS["UN"]))
+        elif hasattr(filter, "_label"):
+            self._filter_label = filter._label
+            self._filter_label_color = WHITE
         else:
             self._filter_label = None
             self._filter_label_color = WHITE
@@ -158,6 +161,9 @@ class VizualizationBuilder:
             pitch_name = df["pitch_name"].iloc[0] if not df.empty else filter._pitch_type
             self._filter_label = pitch_name
             self._filter_label_color = ManimColor(PITCH_COLORS.get(filter._pitch_type, PITCH_COLORS["UN"]))
+        elif hasattr(filter, "_label"):
+            self._filter_label = filter._label
+            self._filter_label_color = WHITE
         else:
             self._filter_label = None
             self._filter_label_color = WHITE
@@ -220,8 +226,13 @@ class VizualizationBuilder:
 
         return self
 
-    def buildm_pitches(self) -> type[ThreeDScene]:
-        """Return a Manim ThreeDScene class of pitches ready to be rendered."""
+    def buildm_pitches(self, sequential: bool = False) -> type[ThreeDScene]:
+        """Return a Manim ThreeDScene class of pitches ready to be rendered.
+
+        sequential: when True, play each pitch's Create animation one at a
+        time, clear the trajectories/dots, then replay all of them together
+        overlaid. When False (default), all pitches animate simultaneously.
+        """
 
         if self._axes is None:
             raise RuntimeError("Call load_pitches() before build().")
@@ -312,15 +323,38 @@ class VizualizationBuilder:
                     scene_objects.append(label)
                 self.add(*scene_objects)
 
-                # Animate all pitches simultaneously
-                animations = [
-                    Create(pitch, run_time=t_end)
-                    for pitch, t_end in zip(pitches, end_times)
-                ]
-                self.play(*animations)
-                for end_point, color in zip(end_points, colors):
-                    self.add(Dot3D(point=end_point, radius=0.05, color=color))
-                self.wait()
+                if sequential:
+                    # Play each pitch one at a time, then clear and replay all overlaid
+                    dots = []
+                    for pitch, t_end, end_point, color in zip(pitches, end_times, end_points, colors):
+                        self.play(Create(pitch, run_time=t_end))
+                        dot = Dot3D(point=end_point, radius=0.05, color=color)
+                        self.add(dot)
+                        dots.append(dot)
+                        self.wait(1)
+
+                    self.wait(0.5)
+                    self.play(*[FadeOut(m) for m in (*pitches, *dots)])
+
+                    replay_pitches = [pitch.copy() for pitch in pitches]
+                    animations = [
+                        Create(pitch, run_time=t_end)
+                        for pitch, t_end in zip(replay_pitches, end_times)
+                    ]
+                    self.play(*animations)
+                    for end_point, color in zip(end_points, colors):
+                        self.add(Dot3D(point=end_point, radius=0.05, color=color))
+                    self.wait()
+                else:
+                    # Animate all pitches simultaneously
+                    animations = [
+                        Create(pitch, run_time=t_end)
+                        for pitch, t_end in zip(pitches, end_times)
+                    ]
+                    self.play(*animations)
+                    for end_point, color in zip(end_points, colors):
+                        self.add(Dot3D(point=end_point, radius=0.05, color=color))
+                    self.wait()
 
         return PitchTrajectory
 

@@ -81,6 +81,35 @@ def pitches_filter_by_name(df: pd.DataFrame, pitch_name: str):
 
     return df[df['pitch_type'] == pitch_name]
 
+def pitches_filter_by_at_bat(at_bat_number: int, label: str | None = None):
+    def _filter(df: pd.DataFrame) -> pd.DataFrame:
+        return (
+            df[["vx0", "vy0", "vz0", "ax", "ay", "az",
+                "release_pos_x", "release_pos_z", "release_pos_y",
+                "pitch_type", "at_bat_number", "pitch_number"]]
+            .dropna()
+            .loc[lambda d: d["at_bat_number"] == at_bat_number]
+            .sort_values("pitch_number")
+        )
+    _filter._label = label or f"At-Bat #{at_bat_number}"
+    return _filter
+
+
+def pitches_filter_by_pitch_numbers(at_bat_number: int, pitch_numbers: list[int]):
+    def _filter(df: pd.DataFrame) -> pd.DataFrame:
+        return (
+            df[["vx0", "vy0", "vz0", "ax", "ay", "az",
+                "release_pos_x", "release_pos_z", "release_pos_y",
+                "pitch_type", "pitch_name", "at_bat_number", "pitch_number"]]
+            .dropna(subset=["vx0", "vy0", "vz0", "ax", "ay", "az",
+                             "release_pos_x", "release_pos_z", "release_pos_y", "pitch_type"])
+            .loc[lambda d: (d["at_bat_number"] == at_bat_number) & (d["pitch_number"].isin(pitch_numbers))]
+            .sort_values("pitch_number")
+        )
+    _filter._label = f"Tunnel: pitches {', '.join(str(n) for n in sorted(pitch_numbers))} (AB #{at_bat_number})"
+    return _filter
+
+
 def location_filter(df: pd.DataFrame, pitch_type: str | None = None, stand: str | None = None) -> pd.DataFrame:
     columns_to_keep = [
             "pitch_type", "plate_x", "plate_z", "zone",

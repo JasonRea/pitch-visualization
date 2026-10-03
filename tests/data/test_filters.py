@@ -4,6 +4,8 @@ from pitchviz.data.filters import (
     pitches_filter_vs_left,
     pitches_filter_vs_right,
     pitches_filter_by_pitch_type,
+    pitches_filter_by_at_bat,
+    pitches_filter_by_pitch_numbers,
     location_filter,
 )
 
@@ -63,6 +65,30 @@ def test_location_filter_combines_both_filters(outing_df):
 
     assert (result["pitch_type"] == "FF").all()
     assert (result["stand"] == "L").all()
+
+
+def test_pitches_filter_by_at_bat_filters_and_sorts_by_pitch_number(outing_df):
+    filt = pitches_filter_by_at_bat(1)
+    result = filt(outing_df)
+
+    assert filt._label == "At-Bat #1"
+    assert (result["at_bat_number"] == 1).all()
+    assert list(result["pitch_number"]) == [1, 2, 3]
+
+
+def test_pitches_filter_by_at_bat_accepts_custom_label(outing_df):
+    filt = pitches_filter_by_at_bat(1, label="vs Corbin Carroll — Inning 1")
+
+    assert filt._label == "vs Corbin Carroll — Inning 1"
+
+
+def test_pitches_filter_by_pitch_numbers_filters_to_selected_pitches(outing_df):
+    filt = pitches_filter_by_pitch_numbers(1, [1, 3])
+    result = filt(outing_df)
+
+    assert "Tunnel" in filt._label
+    assert (result["at_bat_number"] == 1).all()
+    assert list(result["pitch_number"]) == [1, 3]
 
 
 def test_event_map_covers_common_outcomes():

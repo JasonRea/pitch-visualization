@@ -41,6 +41,7 @@ def test_first_at_bat_golden_values(outing_df):
     assert first["inning"] == 1
     assert first["inning_topbot"] == "Top"
     assert first["stand"] == "L"
+    assert first["batter"] == 682998
     assert first["final_outcome"] == "Single"
     assert len(first["pitches"]) == 3
     assert first["pitches"][-1]["description"] == "hit_into_play"
