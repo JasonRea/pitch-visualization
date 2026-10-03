@@ -215,14 +215,8 @@ CLAUDE.md
 
 # Notebooks
 *.ipynb
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.env.local
-!frontend/src/lib/
-
-# Backend
-backend/__pycache__/
-
 # Temporarily disable workflows
 .github/workflows
+
+# Graphify
+graphify-out
