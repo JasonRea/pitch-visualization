@@ -76,6 +76,14 @@ def test_pitches_filter_by_at_bat_filters_and_sorts_by_pitch_number(outing_df):
     assert list(result["pitch_number"]) == [1, 2, 3]
 
 
+def test_pitches_filter_by_at_bat_keeps_batter_column(outing_df):
+    filt = pitches_filter_by_at_bat(1)
+    result = filt(outing_df)
+
+    assert "batter" in result.columns
+    assert result["batter"].nunique() == 1
+
+
 def test_pitches_filter_by_at_bat_accepts_custom_label(outing_df):
     filt = pitches_filter_by_at_bat(1, label="vs Corbin Carroll — Inning 1")
 
@@ -89,6 +97,8 @@ def test_pitches_filter_by_pitch_numbers_filters_to_selected_pitches(outing_df):
     assert "Tunnel" in filt._label
     assert (result["at_bat_number"] == 1).all()
     assert list(result["pitch_number"]) == [1, 3]
+    assert "batter" in result.columns
+    assert result["batter"].nunique() == 1
 
 
 def test_event_map_covers_common_outcomes():

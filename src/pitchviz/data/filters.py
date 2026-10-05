@@ -86,7 +86,7 @@ def pitches_filter_by_at_bat(at_bat_number: int, label: str | None = None):
         return (
             df[["vx0", "vy0", "vz0", "ax", "ay", "az",
                 "release_pos_x", "release_pos_z", "release_pos_y",
-                "pitch_type", "at_bat_number", "pitch_number"]]
+                "pitch_type", "at_bat_number", "pitch_number", "batter"]]
             .dropna()
             .loc[lambda d: d["at_bat_number"] == at_bat_number]
             .sort_values("pitch_number")
@@ -100,7 +100,7 @@ def pitches_filter_by_pitch_numbers(at_bat_number: int, pitch_numbers: list[int]
         return (
             df[["vx0", "vy0", "vz0", "ax", "ay", "az",
                 "release_pos_x", "release_pos_z", "release_pos_y",
-                "pitch_type", "pitch_name", "at_bat_number", "pitch_number"]]
+                "pitch_type", "pitch_name", "at_bat_number", "pitch_number", "batter"]]
             .dropna(subset=["vx0", "vy0", "vz0", "ax", "ay", "az",
                              "release_pos_x", "release_pos_z", "release_pos_y", "pitch_type"])
             .loc[lambda d: (d["at_bat_number"] == at_bat_number) & (d["pitch_number"].isin(pitch_numbers))]

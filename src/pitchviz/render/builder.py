@@ -5,7 +5,7 @@ from scipy.optimize import brentq
 from manim import *
 
 from pitchviz.config import PITCH_COLORS
-from pitchviz.data.fetch import pitch_data, daily_pitches
+from pitchviz.data.fetch import pitch_data, daily_pitches, get_player_heights
 from pitchviz.data.filters import (
     pitches_filter_vs_left,
     pitches_filter_vs_right,
@@ -23,6 +23,12 @@ def position(
     y = y0 + vy0 * t + 0.5 * ay * t ** 2
     z = z0 + vz0 * t + 0.5 * az * t ** 2
     return np.array([x, y, z])
+
+
+def abs_strike_zone(height_inches: float) -> tuple[float, float]:
+    """Automated Ball-Strike (ABS) zone bottom/top in feet, per Baseball Savant's
+    definition: bottom at 27% of the batter's height, top at 53.5%."""
+    return height_inches * 0.27 / 12, height_inches * 0.535 / 12
 
 class VizualizationBuilder:
     """
@@ -48,10 +54,36 @@ class VizualizationBuilder:
         self._axes: ThreeDAxes | None = None
         self._filter_label: str | None = None
         self._filter_label_color = WHITE
+        # Default/fallback strike zone (ft) — today's generic MLB-average
+        # zone, used whenever a render spans more than one batter (full
+        # outing, vs-left/vs-right splits) and there's no single batter to
+        # size an ABS zone to.
+        self._sz_bottom: float = 12 / 12
+        self._sz_top: float = (12 + 20) / 12
 
     # ------------------------------------------------------------------
     # Builder steps
     # ------------------------------------------------------------------
+
+    def _resolve_strike_zone(self, df: pd.DataFrame) -> None:
+        """Size the strike zone to the batter's ABS zone when the filtered
+        df is scoped to a single batter (at-bat / tunnel views); otherwise
+        leaves the generic default in place."""
+        if "batter" not in df.columns:
+            return
+        batters = df["batter"].dropna().unique()
+        if len(batters) != 1:
+            return
+
+        batter_id = int(batters[0])
+        try:
+            heights = get_player_heights([batter_id])
+        except Exception:
+            return
+
+        height_inches = heights.get(batter_id)
+        if height_inches is not None:
+            self._sz_bottom, self._sz_top = abs_strike_zone(height_inches)
 
     def load_pitches(self, date: str, pitcher: str, filter: Callable[[pd.DataFrame], pd.DataFrame]) -> "VizualizationBuilder":
         """Fetch Statcast data and build the parametric curves"""
@@ -65,6 +97,7 @@ class VizualizationBuilder:
 
         # Apply filter
         df = filter(df)
+        self._resolve_strike_zone(df)
 
         if filter is pitches_filter_vs_left:
             self._filter_label = "vs Left"
@@ -150,6 +183,7 @@ class VizualizationBuilder:
         self._colors.clear()
 
         df = filter(df)
+        self._resolve_strike_zone(df)
 
         if filter is pitches_filter_vs_left:
             self._filter_label = "vs Left"
@@ -248,6 +282,8 @@ class VizualizationBuilder:
         colors       = list(self._colors)
         filter_label = self._filter_label
         filter_label_color = self._filter_label_color
+        sz_bottom_ft = self._sz_bottom
+        sz_top_ft    = self._sz_top
 
         class PitchTrajectory(ThreeDScene):
             def construct(self):
@@ -284,10 +320,12 @@ class VizualizationBuilder:
                 grid = VGroup(*grid_lines)
                 grid.set_opacity(0.4)
 
-                # Strike Zone Metrics
+                # Strike Zone Metrics — ABS zone (27%/53.5% of batter height)
+                # when the render is scoped to a single batter, otherwise the
+                # generic default set in VizualizationBuilder.__init__.
                 sz_width  = 17 / 12          # in -> ft
-                sz_bottom = 12 / 12
-                sz_top    = (12 + 20) / 12
+                sz_bottom = sz_bottom_ft
+                sz_top    = sz_top_ft
                 sz_mid_z  = (sz_bottom + sz_top) / 2
 
                 strike_zone = Rectangle(

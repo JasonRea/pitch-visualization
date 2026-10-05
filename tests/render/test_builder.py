@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from pitchviz.render.builder import position
+from pitchviz.data.filters import pitches_filter, pitches_filter_by_at_bat
+from pitchviz.render.builder import position, abs_strike_zone, VizualizationBuilder
 
 
 def test_position_at_t_zero_is_release_point():
@@ -32,3 +33,44 @@ def test_position_y_decreases_toward_plate_over_time():
     p1 = position(0.3,  x0=0, y0=60.5, z0=5.5, vx0=0, vy0=-130, vz0=0, ax=0, ay=20, az=0)
 
     assert p1[1] < p0[1]
+
+
+def test_abs_strike_zone_matches_known_values():
+    # A 6' (72in) batter: bottom at 27%, top at 53.5% of height, in feet.
+    bottom, top = abs_strike_zone(72)
+
+    assert bottom == pytest.approx(1.62)
+    assert top == pytest.approx(3.21)
+
+
+def test_resolve_strike_zone_uses_batter_height_for_single_batter_df(monkeypatch, outing_df):
+    filt = pitches_filter_by_at_bat(1)
+    df = filt(outing_df)
+    batter_id = int(df["batter"].iloc[0])
+
+    monkeypatch.setattr(
+        "pitchviz.render.builder.get_player_heights",
+        lambda ids: {batter_id: 72},
+    )
+
+    builder = VizualizationBuilder()
+    builder._resolve_strike_zone(df)
+
+    assert builder._sz_bottom == pytest.approx(1.62)
+    assert builder._sz_top == pytest.approx(3.21)
+
+
+def test_resolve_strike_zone_keeps_default_for_multi_batter_df(monkeypatch, outing_df):
+    df = pitches_filter(outing_df)  # full outing — no "batter" column, many batters
+
+    def _boom(ids):
+        raise AssertionError("should not look up heights for a multi-batter df")
+
+    monkeypatch.setattr("pitchviz.render.builder.get_player_heights", _boom)
+
+    builder = VizualizationBuilder()
+    default_bottom, default_top = builder._sz_bottom, builder._sz_top
+    builder._resolve_strike_zone(df)
+
+    assert builder._sz_bottom == default_bottom
+    assert builder._sz_top == default_top

@@ -1,3 +1,4 @@
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pybaseball
@@ -136,6 +137,37 @@ def get_player_names(player_ids: list[int]) -> dict[int, str]:
     response.raise_for_status()
 
     return {p["id"]: p["fullName"] for p in response.json().get("people", [])}
+
+
+_HEIGHT_RE = re.compile(r"(\d+)'\s*(\d+)\"?")
+
+
+def get_player_heights(player_ids: list[int]) -> dict[int, float]:
+    """Bulk-resolve player MLBAM IDs to height in inches, for the ABS strike zone formula.
+
+    Same endpoint as get_player_names (confirmed live: every person object
+    already includes a "height" field like "6' 6\"", no extra hydrate
+    needed). IDs with a missing or unparseable height are simply omitted
+    rather than raising.
+    """
+    unique_ids = sorted(set(player_ids))
+    if not unique_ids:
+        return {}
+
+    response = requests.get(
+        "https://statsapi.mlb.com/api/v1/people",
+        params={"personIds": ",".join(str(i) for i in unique_ids)},
+        timeout=15,
+    )
+    response.raise_for_status()
+
+    heights = {}
+    for p in response.json().get("people", []):
+        match = _HEIGHT_RE.match(p.get("height", ""))
+        if match:
+            feet, inches = match.groups()
+            heights[p["id"]] = int(feet) * 12 + int(inches)
+    return heights
 
 def get_game_ids(date: str) -> list[int]:
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={date}"

@@ -211,3 +211,34 @@ def test_get_player_names_resolves_bulk_ids(monkeypatch):
 
     assert result == {682998: "Corbin Carroll", 656427: "Jack Flaherty"}
     assert seen["params"]["personIds"] == "656427,682998"
+
+
+def test_get_player_heights_returns_empty_dict_for_no_ids():
+    assert fetch_module.get_player_heights([]) == {}
+
+
+def test_get_player_heights_parses_feet_and_inches(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _FakeResponse({
+        "people": [
+            {"id": 694973, "height": "6' 6\""},
+            {"id": 656427, "height": "6' 4\""},
+        ]
+    }))
+
+    result = fetch_module.get_player_heights([694973, 656427])
+
+    assert result == {694973: 78, 656427: 76}
+
+
+def test_get_player_heights_omits_missing_or_unparseable_height(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _FakeResponse({
+        "people": [
+            {"id": 1, "height": "6' 2\""},
+            {"id": 2},
+            {"id": 3, "height": "unknown"},
+        ]
+    }))
+
+    result = fetch_module.get_player_heights([1, 2, 3])
+
+    assert result == {1: 74}
