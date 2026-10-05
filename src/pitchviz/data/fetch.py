@@ -7,7 +7,7 @@ from rapidfuzz import fuzz, process
 
 pybaseball.cache.enable()
 
-_pitcher_roster_cache: list[dict] | None = None
+_pitcher_roster_cache: dict[int, list[dict]] = {}
 
 
 def _lookup_player_id(pitcher: str) -> int:
@@ -38,35 +38,44 @@ def pitch_data(start_dt: str, pitcher: str, end_dt: str | None = None) -> pd.Dat
 _FUZZY_MATCH_CUTOFF = 55
 
 
-def search_pitchers(query: str) -> list[dict]:
-    """Fuzzy-search the active MLB pitcher roster by name, tolerant of typos/partial names."""
+def search_pitchers(query: str, season: int) -> list[dict]:
+    """Fuzzy-search that season's MLB pitcher roster by name, tolerant of typos/partial names.
+
+    Scoped to `season` rather than the current active roster so historical
+    pitchers (e.g. retired by now) can still be found when browsing past
+    outings — searching against only the current roster would silently miss
+    them.
+    """
     global _pitcher_roster_cache
 
     if not query or len(query) < 2:
         return []
 
-    if _pitcher_roster_cache is None:
+    if season not in _pitcher_roster_cache:
         response = requests.get(
             "https://statsapi.mlb.com/api/v1/sports/1/players",
-            params={"season": 2026, "gameType": "R"},
+            params={"season": season, "gameType": "R"},
             timeout=15,
         )
         response.raise_for_status()
-        _pitcher_roster_cache = [
+        _pitcher_roster_cache[season] = [
             p for p in response.json().get("people", [])
             if p.get("primaryPosition", {}).get("type") == "Pitcher"
         ]
 
-    names = [p["fullName"] for p in _pitcher_roster_cache]
+    roster = _pitcher_roster_cache[season]
+    names = [p["fullName"] for p in roster]
     matches = process.extract(
         query, names, scorer=fuzz.WRatio, limit=10, score_cutoff=_FUZZY_MATCH_CUTOFF,
     )
 
     return [
         {
-            "mlbam_id":  _pitcher_roster_cache[idx]["id"],
-            "full_name": _pitcher_roster_cache[idx]["fullName"],
-            "team":      _pitcher_roster_cache[idx].get("currentTeam", {}).get("abbreviation", ""),
+            "mlbam_id":  roster[idx]["id"],
+            "full_name": roster[idx]["fullName"],
+            # The roster endpoint's currentTeam object has no "abbreviation"
+            # field (confirmed against the real API) — only id/name/link.
+            "team":      roster[idx].get("currentTeam", {}).get("name", ""),
         }
         for _, _, idx in matches
     ]

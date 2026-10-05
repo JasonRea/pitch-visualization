@@ -57,15 +57,15 @@ def test_pitch_data_wraps_any_failure_as_runtime_error(monkeypatch):
 
 
 def test_search_pitchers_requires_min_two_chars():
-    assert fetch_module.search_pitchers("s") == []
+    assert fetch_module.search_pitchers("s", season=2024) == []
 
 
 def test_search_pitchers_filters_by_name_and_caches(monkeypatch):
-    monkeypatch.setattr(fetch_module, "_pitcher_roster_cache", None)
+    monkeypatch.setattr(fetch_module, "_pitcher_roster_cache", {})
     roster_response = _FakeResponse({
         "people": [
-            {"id": 1, "fullName": "Paul Skenes", "primaryPosition": {"type": "Pitcher"}, "currentTeam": {"abbreviation": "PIT"}},
-            {"id": 2, "fullName": "Shohei Ohtani", "primaryPosition": {"type": "Outfielder"}, "currentTeam": {"abbreviation": "LAD"}},
+            {"id": 1, "fullName": "Paul Skenes", "primaryPosition": {"type": "Pitcher"}, "currentTeam": {"name": "Pittsburgh Pirates"}},
+            {"id": 2, "fullName": "Shohei Ohtani", "primaryPosition": {"type": "Outfielder"}, "currentTeam": {"name": "Los Angeles Dodgers"}},
         ]
     })
     calls = []
@@ -76,26 +76,49 @@ def test_search_pitchers_filters_by_name_and_caches(monkeypatch):
 
     monkeypatch.setattr("requests.get", fake_get)
 
-    result = fetch_module.search_pitchers("skenes")
-    assert result == [{"mlbam_id": 1, "full_name": "Paul Skenes", "team": "PIT"}]
+    result = fetch_module.search_pitchers("skenes", season=2024)
+    assert result == [{"mlbam_id": 1, "full_name": "Paul Skenes", "team": "Pittsburgh Pirates"}]
 
-    # second call should hit the in-process cache, not requests.get again
-    fetch_module.search_pitchers("skenes")
+    # second call for the same season should hit the in-process cache, not requests.get again
+    fetch_module.search_pitchers("skenes", season=2024)
     assert len(calls) == 1
 
 
-def test_search_pitchers_tolerates_typos(monkeypatch):
-    monkeypatch.setattr(fetch_module, "_pitcher_roster_cache", None)
+def test_search_pitchers_caches_per_season(monkeypatch):
+    monkeypatch.setattr(fetch_module, "_pitcher_roster_cache", {})
     roster_response = _FakeResponse({
         "people": [
-            {"id": 1, "fullName": "Paul Skenes", "primaryPosition": {"type": "Pitcher"}, "currentTeam": {"abbreviation": "PIT"}},
+            {"id": 1, "fullName": "Paul Skenes", "primaryPosition": {"type": "Pitcher"}, "currentTeam": {"name": "Pittsburgh Pirates"}},
+        ]
+    })
+    calls = []
+
+    def fake_get(*args, **kwargs):
+        calls.append(args)
+        return roster_response
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    fetch_module.search_pitchers("skenes", season=2023)
+    fetch_module.search_pitchers("skenes", season=2024)
+
+    # different seasons are independent cache entries, so both hit the network
+    assert len(calls) == 2
+    assert set(fetch_module._pitcher_roster_cache.keys()) == {2023, 2024}
+
+
+def test_search_pitchers_tolerates_typos(monkeypatch):
+    monkeypatch.setattr(fetch_module, "_pitcher_roster_cache", {})
+    roster_response = _FakeResponse({
+        "people": [
+            {"id": 1, "fullName": "Paul Skenes", "primaryPosition": {"type": "Pitcher"}, "currentTeam": {"name": "Pittsburgh Pirates"}},
         ]
     })
     monkeypatch.setattr("requests.get", lambda *a, **k: roster_response)
 
-    result = fetch_module.search_pitchers("Paul Skeens")  # transposed typo
+    result = fetch_module.search_pitchers("Paul Skeens", season=2024)  # transposed typo
 
-    assert result == [{"mlbam_id": 1, "full_name": "Paul Skenes", "team": "PIT"}]
+    assert result == [{"mlbam_id": 1, "full_name": "Paul Skenes", "team": "Pittsburgh Pirates"}]
 
 
 def _gamelog_response(date, opponent, is_home):
