@@ -227,6 +227,20 @@ def _select_quality() -> str:
     return quality
 
 
+def _select_camera() -> str:
+    camera = questionary.select(
+        "Camera angle:",
+        choices=[
+            Choice(title="Catcher's view - looking from home plate toward the mound", value="catcher"),
+            Choice(title="Pitcher's mound - looking from the mound toward home plate", value="mound"),
+        ],
+        style=STYLE,
+    ).ask()
+    if camera is None:
+        sys.exit(0)
+    return camera
+
+
 def run_tui() -> None:
     console.print(Panel.fit("[bold]Pitch Viz[/bold] — interactive renderer", border_style="#67E18D"))
 
@@ -247,12 +261,14 @@ def run_tui() -> None:
         sys.exit(1)
 
     filt, description, sequential = _select_scope(df)
+    camera = _select_camera()
     quality = _select_quality()
 
     summary = Table.grid(padding=(0, 2))
     summary.add_row("[bold]Pitcher:[/bold]", pitcher_name)
     summary.add_row("[bold]Date:[/bold]", date)
     summary.add_row("[bold]Scope:[/bold]", description)
+    summary.add_row("[bold]Camera:[/bold]", "Pitcher's mound" if camera == "mound" else "Catcher's view")
     summary.add_row("[bold]Quality:[/bold]", quality)
     console.print(Panel(summary, title="Render Summary", border_style="#1BB999"))
 
@@ -261,8 +277,9 @@ def run_tui() -> None:
     if builder._axes is None:
         console.print("[red]No pitches to render for this selection.[/red]")
         sys.exit(1)
-    scene_class = builder.buildm_pitches(sequential=sequential)
-    filename = f"{pitcher_name} {date} {description}"
+    scene_class = builder.buildm_pitches(sequential=sequential, camera=camera)
+    camera_label = "Mound POV" if camera == "mound" else "Catcher POV"
+    filename = f"{pitcher_name} {date} {description} ({camera_label})"
 
     with console.status("[bold green]Rendering...[/bold green]", spinner="dots"):
         VizualizationBuilder.render(scene_class, quality=quality, filename=filename)

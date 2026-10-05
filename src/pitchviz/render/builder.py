@@ -226,12 +226,15 @@ class VizualizationBuilder:
 
         return self
 
-    def buildm_pitches(self, sequential: bool = False) -> type[ThreeDScene]:
+    def buildm_pitches(self, sequential: bool = False, camera: str = "catcher") -> type[ThreeDScene]:
         """Return a Manim ThreeDScene class of pitches ready to be rendered.
 
         sequential: when True, play each pitch's Create animation one at a
         time, clear the trajectories/dots, then replay all of them together
         overlaid. When False (default), all pitches animate simultaneously.
+        camera: "catcher" (default, looking from behind home plate toward the
+        mound) or "mound" (looking from behind the pitcher's mound toward
+        home plate).
         """
 
         if self._axes is None:
@@ -249,21 +252,37 @@ class VizualizationBuilder:
         class PitchTrajectory(ThreeDScene):
             def construct(self):
 
-                # Background grid
-                grid = NumberPlane(
-                    x_range=[-5, 5, 1],
-                    y_range=[0, 20, 1],
-                    x_length=scale * 10,
-                    y_length=scale * 20,
-                    background_line_style={
-                        "stroke_color": BLUE,
-                        "stroke_width": 1,
-                        "stroke_opacity": 0.4,
-                    },
-                    axis_config={"stroke_opacity": 0},
-                )
-                grid.move_to(axes.c2p(0, 0, 10))
-                grid.rotate(90 * DEGREES, axis=RIGHT)
+                # Background grid — checkered squares lying flat on the
+                # ground, bounded to fair territory (between the foul
+                # lines, i.e. |x| <= y) rather than a full rectangle that
+                # spills into foul territory. Built from individual line
+                # segments rather than NumberPlane, which can't be clipped
+                # to a wedge shape. Note: a perfectly level camera
+                # (catcher's view, phi=90) views this near edge-on,
+                # compressing it toward the horizon — a real perspective
+                # effect, not a sizing issue.
+                grid_step = 7    # ft, larger = fewer/bigger squares
+                grid_depth = 70  # ft from home plate
+                grid_lines = []
+                for y in range(grid_step, grid_depth + 1, grid_step):
+                    grid_lines.append(Line3D(
+                        start=axes.c2p(-y, y, 0),
+                        end=axes.c2p(y, y, 0),
+                        thickness=0.01,
+                        color=BLUE,
+                    ))
+                for x in range(-grid_depth, grid_depth + 1, grid_step):
+                    y_start = abs(x)
+                    if y_start >= grid_depth:
+                        continue
+                    grid_lines.append(Line3D(
+                        start=axes.c2p(x, y_start, 0),
+                        end=axes.c2p(x, grid_depth, 0),
+                        thickness=0.01,
+                        color=BLUE,
+                    ))
+                grid = VGroup(*grid_lines)
+                grid.set_opacity(0.4)
 
                 # Strike Zone Metrics
                 sz_width  = 17 / 12          # in -> ft
@@ -280,13 +299,55 @@ class VizualizationBuilder:
                 strike_zone.set_stroke(WHITE, 4)
                 strike_zone.set_fill(opacity=0)
 
-                # Camera (catcher's POV)
-                self.set_camera_orientation(
-                    phi=90 * DEGREES,
-                    theta=-90 * DEGREES,
-                    zoom=0.2,
-                    frame_center=axes.c2p(0, 30, 3),
-                )
+                # Camera
+                if camera == "mound":
+                    # focal_distance is set explicitly here (default is 20)
+                    # because this view's frame_center sits close to the mound
+                    # itself in depth; with the default focal_distance, the
+                    # perspective projection's factor = focal_distance /
+                    # (focal_distance - z) blows up near that asymptote,
+                    # ballooning the mound and squishing everything else. A
+                    # large focal_distance also flattens perspective falloff
+                    # with depth, which is what gives this view its
+                    # telephoto-compressed "broadcast center-field camera"
+                    # look (full mound + release point in frame, not a
+                    # tight first-person close-up). phi is kept close to 90
+                    # (near-level) so the shot reads as an elevated-platform
+                    # height rather than a steep aerial look-down at the
+                    # mound; frame_center z is the elevation of that
+                    # platform — counterintuitively, a *larger* z here pushes
+                    # the (ground-level) mound further toward the bottom of
+                    # frame rather than higher, since raising this near-level
+                    # camera's eye height raises the horizon line with it.
+                    self.set_camera_orientation(
+                        phi=88 * DEGREES,
+                        theta=90 * DEGREES,
+                        zoom=0.95,
+                        focal_distance=150,
+                        frame_center=axes.c2p(0, 24, 8),
+                    )
+                else:
+                    # Camera (catcher's POV) — same as the last committed
+                    # version.
+                    self.set_camera_orientation(
+                        phi=90 * DEGREES,
+                        theta=-90 * DEGREES,
+                        zoom=0.2,
+                        frame_center=axes.c2p(0, 30, 3),
+                    )
+
+                # Pitcher's mound (18ft-diameter dirt circle centered 59ft from
+                # home plate, rubber at the official 60.5ft distance). Flat on
+                # the ground, like home_plate/foul lines above — no rotation.
+                mound = Circle(radius=9 * scale)
+                mound.move_to(axes.c2p(0, 59, 0))
+                mound.set_stroke(width=0)
+                mound.set_fill(color="#8B5A2B", opacity=0.9)
+
+                rubber = Rectangle(width=2 * scale, height=0.5 * scale)
+                rubber.move_to(axes.c2p(0, 60.5, 0.02))
+                rubber.set_stroke(width=0)
+                rubber.set_fill(color=WHITE, opacity=1)
 
                 # Foul lines (XY plane, z=0): y=x right, y=-x left
                 foul_extent = 330  # feet
@@ -314,12 +375,21 @@ class VizualizationBuilder:
                 home_plate.set_stroke(WHITE, 2)
                 home_plate.set_fill(opacity=0)
 
-                scene_objects = [grid, strike_zone, right_foul_line, left_foul_line, home_plate]
+                scene_objects = [grid, strike_zone, right_foul_line, left_foul_line, home_plate, mound, rubber]
                 if filter_label is not None:
                     label = Text(filter_label, color=filter_label_color)
                     label.scale(0.3)
                     label.move_to(axes.c2p(0, 0, sz_top + 2.5))
                     label.rotate(90 * DEGREES, axis=RIGHT)
+                    if camera == "mound":
+                        # The label is a flat 2D VMobject with no real
+                        # backface culling, so unlike the symmetric shapes
+                        # around it (strike zone, mound, foul lines), its
+                        # left-right asymmetry exposes the fact that the
+                        # mound camera's theta (90°) is mirrored relative to
+                        # the catcher camera's theta (-90°) — without this,
+                        # the text reads backwards from the mound's side.
+                        label.stretch(-1, 0)
                     scene_objects.append(label)
                 self.add(*scene_objects)
 
