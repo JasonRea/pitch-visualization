@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from pitchviz.config import PITCH_NAMES
-from pitchviz.data.fetch import search_pitchers, get_pitcher_outings, get_player_names, pitch_data
+from pitchviz.data.fetch import search_pitchers, get_pitcher_outings, get_player_names, pitch_data, live_pitch_data
 from pitchviz.data.sequence import at_bat_sequences
 from pitchviz.data.filters import (
     pitches_filter,
@@ -139,13 +139,15 @@ def _select_outing(pitcher_name: str, season: int):
 
     def _title(o: dict) -> str:
         base = f"{o['date']}  vs {o['opponent']} ({o['home_away']})"
+        if not o["final"]:
+            base += "  (Live)"
         return f"★ {base} (Postseason)" if o["postseason"] else base
 
     choice = questionary.select(
         f"Select an outing ({pitcher_name}, {season}):",
         choices=[
             Choice(title="← Back", value=_BACK),
-            *[Choice(title=_title(o), value=o["date"]) for o in reversed(outings)],
+            *[Choice(title=_title(o), value=o) for o in reversed(outings)],
         ],
         style=STYLE,
     ).ask()
@@ -311,15 +313,20 @@ def run_tui() -> None:
             continue
 
         if step == "outing":
-            date = _select_outing(results["pitcher"]["full_name"], results["year"])
-            if date is _BACK:
+            outing = _select_outing(results["pitcher"]["full_name"], results["year"])
+            if outing is _BACK:
                 i -= 1
                 continue
 
             pitcher_name = results["pitcher"]["full_name"]
-            with console.status(f"[bold]Fetching {pitcher_name}'s outing on {date}...[/bold]"):
+            date = outing["date"]
+            status_verb = "Fetching live" if not outing["final"] else "Fetching"
+            with console.status(f"[bold]{status_verb} {pitcher_name}'s outing on {date}...[/bold]"):
                 try:
-                    df = pitch_data(start_dt=date, pitcher=pitcher_name)
+                    if outing["final"]:
+                        df = pitch_data(start_dt=date, pitcher=pitcher_name)
+                    else:
+                        df = live_pitch_data(game_pk=outing["game_pk"], pitcher=pitcher_name)
                 except RuntimeError as e:
                     console.print(f"[red]{e}[/red]")
                     sys.exit(1)

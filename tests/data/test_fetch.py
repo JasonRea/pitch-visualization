@@ -121,10 +121,21 @@ def test_search_pitchers_tolerates_typos(monkeypatch):
     assert result == [{"mlbam_id": 1, "full_name": "Paul Skenes", "team": "Pittsburgh Pirates"}]
 
 
-def _gamelog_response(date, opponent, is_home):
+def _gamelog_response(date, opponent, is_home, game_pk=None):
     return _FakeResponse({
         "stats": [{"splits": [
-            {"date": date, "opponent": {"abbreviation": opponent}, "isHome": is_home},
+            {"date": date, "opponent": {"abbreviation": opponent}, "isHome": is_home,
+             "game": {"gamePk": game_pk}},
+        ]}]
+    })
+
+
+def _schedule_response(statuses: dict):
+    """statuses: {gamePk: abstractGameState}"""
+    return _FakeResponse({
+        "dates": [{"games": [
+            {"gamePk": pk, "status": {"abstractGameState": state}}
+            for pk, state in statuses.items()
         ]}]
     })
 
@@ -160,7 +171,7 @@ def test_get_pitcher_outings_returns_regular_season_game_log(monkeypatch):
 
     result = fetch_module.get_pitcher_outings("Paul Skenes", 2024)
 
-    assert result == [{"date": "2024-08-04", "opponent": "CIN", "home_away": "home", "postseason": False}]
+    assert result == [{"date": "2024-08-04", "opponent": "CIN", "home_away": "home", "postseason": False, "game_pk": None, "final": True}]
 
 
 def test_get_pitcher_outings_merges_and_tags_postseason(monkeypatch):
@@ -177,8 +188,32 @@ def test_get_pitcher_outings_merges_and_tags_postseason(monkeypatch):
     result = fetch_module.get_pitcher_outings("Jack Flaherty", 2024)
 
     assert result == [
-        {"date": "2024-09-25", "opponent": "COL", "home_away": "away", "postseason": False},
-        {"date": "2024-10-06", "opponent": "SD", "home_away": "home", "postseason": True},
+        {"date": "2024-09-25", "opponent": "COL", "home_away": "away", "postseason": False, "game_pk": None, "final": True},
+        {"date": "2024-10-06", "opponent": "SD", "home_away": "home", "postseason": True, "game_pk": None, "final": True},
+    ]
+
+
+def test_get_pitcher_outings_marks_in_progress_game_as_not_final(monkeypatch):
+    lookup_result = pd.DataFrame({"key_mlbam": [668909]})
+    monkeypatch.setattr("pybaseball.playerid_lookup", lambda *a, **k: lookup_result)
+
+    def fake_get(url, params=None, **kwargs):
+        if "schedule" in url:
+            return _schedule_response({111: "Final", 222: "Live"})
+        if params and params.get("gameType") == "P":
+            return _FakeResponse({"stats": [{"splits": []}]})
+        return _FakeResponse({"stats": [{"splits": [
+            {"date": "2026-10-04", "opponent": {"abbreviation": "NYY"}, "isHome": True, "game": {"gamePk": 111}},
+            {"date": "2026-10-05", "opponent": {"abbreviation": "TB"}, "isHome": False, "game": {"gamePk": 222}},
+        ]}]})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    result = fetch_module.get_pitcher_outings("Gavin Williams", 2026)
+
+    assert result == [
+        {"date": "2026-10-04", "opponent": "NYY", "home_away": "home", "postseason": False, "game_pk": 111, "final": True},
+        {"date": "2026-10-05", "opponent": "TB", "home_away": "away", "postseason": False, "game_pk": 222, "final": False},
     ]
 
 
@@ -228,6 +263,113 @@ def test_get_player_heights_parses_feet_and_inches(monkeypatch):
     result = fetch_module.get_player_heights([694973, 656427])
 
     assert result == {694973: 78, 656427: 76}
+
+
+def test_release_point_matches_real_statcast_release_point():
+    # Real pitchData.coordinates + extension pulled from a live game feed
+    # (Blake Snell, 2026-10-04); expected output verified against that same
+    # game's actual pybaseball/Statcast release_pos_x/y/z (within ~0.01ft).
+    rx, ry, rz = fetch_module._release_point(
+        x0=-3.2163147089092776, y0=50.00590460983415, z0=5.2300425264242545,
+        vx0=15.35355128271588, vy0=-140.61221572217386, vz0=-7.871861852615233,
+        ax=-9.079836994484374, ay=35.225089200189, az=-7.785828980055117,
+        target_y=60.5 - 6.770410849286073,
+    )
+
+    assert rx == pytest.approx(-3.625, abs=0.01)
+    assert ry == pytest.approx(53.730, abs=0.01)
+    assert rz == pytest.approx(5.435, abs=0.01)
+
+
+def _live_feed_response(pitcher_name="Blake Snell", pitcher_id=621107):
+    return _FakeResponse({
+        "liveData": {
+            "plays": {
+                "allPlays": [
+                    {
+                        "about": {"atBatIndex": 0, "inning": 1, "halfInning": "top", "isComplete": True},
+                        "matchup": {
+                            "batter": {"id": 700250, "fullName": "Ben Rice"},
+                            "batSide": {"code": "L"},
+                            "pitcher": {"id": pitcher_id, "fullName": pitcher_name},
+                        },
+                        "result": {"event": "Flyout", "eventType": "field_out"},
+                        "playEvents": [
+                            {
+                                "isPitch": True,
+                                "pitchNumber": 1,
+                                "count": {"balls": 1, "strikes": 0},
+                                "details": {
+                                    "type": {"code": "FF", "description": "Four-Seam Fastball"},
+                                    "code": "B", "description": "Ball",
+                                },
+                                "pitchData": {
+                                    "startSpeed": 97.3, "zone": 14,
+                                    "strikeZoneTop": 3.281, "strikeZoneBottom": 1.656,
+                                    "extension": 6.770410849286073,
+                                    "coordinates": {
+                                        "x0": -3.2163147089092776, "y0": 50.00590460983415, "z0": 5.2300425264242545,
+                                        "vX0": 15.35355128271588, "vY0": -140.61221572217386, "vZ0": -7.871861852615233,
+                                        "aX": -9.079836994484374, "aY": 35.225089200189, "aZ": -7.785828980055117,
+                                        "pX": 1.746, "pZ": 1.871,
+                                    },
+                                },
+                            },
+                            {
+                                "isPitch": True,
+                                "pitchNumber": 2,
+                                "count": {"balls": 1, "strikes": 1},
+                                "details": {
+                                    "type": {"code": "SL", "description": "Slider"},
+                                    "code": "S", "description": "Called Strike",
+                                },
+                                "pitchData": {
+                                    "startSpeed": 88.1, "zone": 5,
+                                    "strikeZoneTop": 3.281, "strikeZoneBottom": 1.656,
+                                    "extension": 6.5,
+                                    "coordinates": {
+                                        "x0": -3.1, "y0": 50.0, "z0": 5.1,
+                                        "vX0": 10.0, "vY0": -130.0, "vZ0": -6.0,
+                                        "aX": -8.0, "aY": 30.0, "aZ": -10.0,
+                                        "pX": 0.1, "pZ": 2.3,
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    })
+
+
+def test_live_pitch_data_maps_pitches_for_the_requested_pitcher(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _live_feed_response())
+
+    df = fetch_module.live_pitch_data(game_pk=849823, pitcher="Blake Snell")
+
+    assert len(df) == 2
+    assert list(df["pitch_type"]) == ["FF", "SL"]
+    assert list(df["pitch_number"]) == [1, 2]
+    assert list(df["at_bat_number"]) == [1, 1]  # atBatIndex 0 -> at_bat_number 1
+    assert list(df["batter"]) == [700250, 700250]
+    assert list(df["stand"]) == ["L", "L"]
+    assert list(df["inning"]) == [1, 1]
+    assert list(df["inning_topbot"]) == ["Top", "Top"]
+    # pre-pitch count: first pitch of the at-bat is always 0-0
+    assert list(df["balls"]) == [0, 1]
+    assert list(df["strikes"]) == [0, 0]
+    # only the last pitch of a completed at-bat carries the outcome
+    assert pd.isna(df["events"].iloc[0])
+    assert df["events"].iloc[1] == "field_out"
+
+
+def test_live_pitch_data_filters_to_the_requested_pitcher(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _live_feed_response())
+
+    df = fetch_module.live_pitch_data(game_pk=849823, pitcher="Someone Else")
+
+    assert df.empty
 
 
 def test_get_player_heights_omits_missing_or_unparseable_height(monkeypatch):
