@@ -9,6 +9,8 @@ from pitchviz.data.fetch import pitch_data, daily_pitches, get_player_heights
 from pitchviz.data.filters import (
     pitches_filter_vs_left,
     pitches_filter_vs_right,
+    EVENT_MAP,
+    PITCH_DESCRIPTION_MAP,
 )
 
 # TODO Specify specific pitch types, vs rhb, lhb, vs particular batters (IN DEVELOPMENT)
@@ -29,6 +31,35 @@ def abs_strike_zone(height_inches: float) -> tuple[float, float]:
     """Automated Ball-Strike (ABS) zone bottom/top in feet, per Baseball Savant's
     definition: bottom at 27% of the batter's height, top at 53.5%."""
     return height_inches * 0.27 / 12, height_inches * 0.535 / 12
+
+
+def pitch_annotation_text(meta: dict) -> str:
+    """Build the per-pitch annotation shown during a sequential (at-bat /
+    tunnel) render: velocity + pitch name, the pitch's result, and — only
+    when this pitch actually ended the at-bat — the at-bat's outcome.
+
+    No "is this the last pitch" bookkeeping is needed: events is already
+    only non-null on the row that ends the at-bat (see
+    pitches_filter_by_at_bat / pitches_filter_by_pitch_numbers).
+    """
+    lines = []
+
+    pitch_name = meta.get("pitch_name")
+    release_speed = meta.get("release_speed")
+    if pitch_name and release_speed is not None:
+        lines.append(f"{pitch_name} · {release_speed:.1f} mph")
+    elif release_speed is not None:
+        lines.append(f"{release_speed:.1f} mph")
+
+    description = meta.get("description")
+    if description:
+        lines.append(PITCH_DESCRIPTION_MAP.get(description, description))
+
+    events = meta.get("events")
+    if events and not pd.isna(events):
+        lines.append(f"Outcome: {EVENT_MAP.get(events, events)}")
+
+    return "\n".join(lines)
 
 class VizualizationBuilder:
     """
@@ -51,6 +82,7 @@ class VizualizationBuilder:
         self._end_points: list = []
         self._end_times: list = []
         self._colors: list = []
+        self._pitch_meta: list = []
         self._axes: ThreeDAxes | None = None
         self._filter_label: str | None = None
         self._filter_label_color = WHITE
@@ -92,6 +124,7 @@ class VizualizationBuilder:
         self._end_points.clear()
         self._end_times.clear()
         self._colors.clear()
+        self._pitch_meta.clear()
 
         df = pitch_data(start_dt=date, pitcher=pitcher)
 
@@ -164,6 +197,12 @@ class VizualizationBuilder:
             )
             self._end_times.append(t_end)
             self._colors.append(PITCH_COLORS.get(pitch_type, PITCH_COLORS["UN"]))
+            self._pitch_meta.append({
+                "release_speed": row.get("release_speed"),
+                "pitch_name":    row.get("pitch_name"),
+                "description":   row.get("description"),
+                "events":        row.get("events"),
+            })
 
         if not self._pitches:
             self._axes = None
@@ -181,6 +220,7 @@ class VizualizationBuilder:
         self._end_points.clear()
         self._end_times.clear()
         self._colors.clear()
+        self._pitch_meta.clear()
 
         df = filter(df)
         self._resolve_strike_zone(df)
@@ -254,21 +294,40 @@ class VizualizationBuilder:
             )
             self._end_times.append(t_end)
             self._colors.append(PITCH_COLORS.get(pitch_type, PITCH_COLORS["UN"]))
+            self._pitch_meta.append({
+                "release_speed": row.get("release_speed"),
+                "pitch_name":    row.get("pitch_name"),
+                "description":   row.get("description"),
+                "events":        row.get("events"),
+            })
 
         if not self._pitches:
             self._axes = None
 
         return self
 
-    def buildm_pitches(self, sequential: bool = False, camera: str = "catcher") -> type[ThreeDScene]:
+    def buildm_pitches(
+        self,
+        sequential: bool = False,
+        camera: str = "catcher",
+        clear_between_pitches: bool = False,
+    ) -> type[ThreeDScene]:
         """Return a Manim ThreeDScene class of pitches ready to be rendered.
 
         sequential: when True, play each pitch's Create animation one at a
-        time, clear the trajectories/dots, then replay all of them together
-        overlaid. When False (default), all pitches animate simultaneously.
+        time — with a text annotation (velocity, pitch result, and the
+        at-bat's outcome on the pitch that ends it) — then replay all of
+        them together overlaid as a closing summary. When False (default),
+        all pitches animate simultaneously with no annotations.
         camera: "catcher" (default, looking from behind home plate toward the
         mound) or "mound" (looking from behind the pitcher's mound toward
         home plate).
+        clear_between_pitches: only meaningful when sequential=True. When
+        True, each pitch's trajectory/dot/annotation is faded out before the
+        next one is shown (a true one-at-a-time walkthrough). When False
+        (default), they accumulate during the walkthrough, matching the
+        pre-existing sequential behavior. Either way the closing overlaid
+        replay is unaffected.
         """
 
         if self._axes is None:
@@ -280,6 +339,7 @@ class VizualizationBuilder:
         end_points   = list(self._end_points)
         end_times    = list(self._end_times)
         colors       = list(self._colors)
+        pitch_meta   = list(self._pitch_meta)
         filter_label = self._filter_label
         filter_label_color = self._filter_label_color
         sz_bottom_ft = self._sz_bottom
@@ -432,17 +492,63 @@ class VizualizationBuilder:
                 self.add(*scene_objects)
 
                 if sequential:
-                    # Play each pitch one at a time, then clear and replay all overlaid
-                    dots = []
-                    for pitch, t_end, end_point, color in zip(pitches, end_times, end_points, colors):
+                    # Play each pitch one at a time, with a text annotation
+                    # (velocity, pitch result, and — on the pitch that ends
+                    # the at-bat — its outcome), then clear and replay all
+                    # overlaid as a closing summary.
+                    def _make_annotation(meta):
+                        text = pitch_annotation_text(meta)
+                        if not text:
+                            return None
+                        ann = Text(text, color=WHITE)
+                        ann.scale(0.25)
+                        # Between the zone top and the filter label further
+                        # above (sz_top + 2.5) — low enough overlaps home
+                        # plate's ground outline instead.
+                        ann.move_to(axes.c2p(0, 0, sz_top + 1.0))
+                        ann.rotate(90 * DEGREES, axis=RIGHT)
+                        if camera == "mound":
+                            # Same left-right mirror fix as the filter label
+                            # above — flat text, no backface culling.
+                            ann.stretch(-1, 0)
+                        return ann
+
+                    accumulated_pitches = []
+                    accumulated_dots = []
+                    annotation = None
+                    for pitch, t_end, end_point, color, meta in zip(
+                        pitches, end_times, end_points, colors, pitch_meta,
+                    ):
                         self.play(Create(pitch, run_time=t_end))
                         dot = Dot3D(point=end_point, radius=0.05, color=color)
                         self.add(dot)
-                        dots.append(dot)
+                        accumulated_pitches.append(pitch)
+                        accumulated_dots.append(dot)
+
+                        new_annotation = _make_annotation(meta)
+                        if annotation is not None:
+                            self.remove(annotation)
+                        if new_annotation is not None:
+                            self.add(new_annotation)
+                        annotation = new_annotation
+
                         self.wait(1)
 
+                        if clear_between_pitches:
+                            fade_targets = [pitch, dot]
+                            if annotation is not None:
+                                fade_targets.append(annotation)
+                            self.play(*[FadeOut(m) for m in fade_targets])
+                            accumulated_pitches.clear()
+                            accumulated_dots.clear()
+                            annotation = None
+
                     self.wait(0.5)
-                    self.play(*[FadeOut(m) for m in (*pitches, *dots)])
+                    remaining = [*accumulated_pitches, *accumulated_dots]
+                    if annotation is not None:
+                        remaining.append(annotation)
+                    if remaining:
+                        self.play(*[FadeOut(m) for m in remaining])
 
                     replay_pitches = [pitch.copy() for pitch in pitches]
                     animations = [

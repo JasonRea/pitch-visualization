@@ -20,6 +20,15 @@ EVENT_MAP = {
 
 }
 
+PITCH_DESCRIPTION_MAP = {
+    "ball": "Ball",
+    "called_strike": "Called Strike",
+    "swinging_strike": "Swinging Strike",
+    "swinging_strike_blocked": "Swinging Strike",
+    "foul": "Foul",
+    "hit_into_play": "In Play",
+}
+
 # -----FILTERS----------
 
 def pitches_filter(df: pd.DataFrame):
@@ -86,8 +95,12 @@ def pitches_filter_by_at_bat(at_bat_number: int, label: str | None = None):
         return (
             df[["vx0", "vy0", "vz0", "ax", "ay", "az",
                 "release_pos_x", "release_pos_z", "release_pos_y",
-                "pitch_type", "at_bat_number", "pitch_number", "batter"]]
-            .dropna()
+                "pitch_type", "pitch_name", "release_speed", "description", "events",
+                "at_bat_number", "pitch_number", "batter"]]
+            # events is NaN by design on every pitch but the one that ends
+            # the at-bat — a blanket dropna() would drop all the others.
+            .dropna(subset=["vx0", "vy0", "vz0", "ax", "ay", "az",
+                             "release_pos_x", "release_pos_z", "release_pos_y", "pitch_type"])
             .loc[lambda d: d["at_bat_number"] == at_bat_number]
             .sort_values("pitch_number")
         )
@@ -100,7 +113,8 @@ def pitches_filter_by_pitch_numbers(at_bat_number: int, pitch_numbers: list[int]
         return (
             df[["vx0", "vy0", "vz0", "ax", "ay", "az",
                 "release_pos_x", "release_pos_z", "release_pos_y",
-                "pitch_type", "pitch_name", "at_bat_number", "pitch_number", "batter"]]
+                "pitch_type", "pitch_name", "release_speed", "description", "events",
+                "at_bat_number", "pitch_number", "batter"]]
             .dropna(subset=["vx0", "vy0", "vz0", "ax", "ay", "az",
                              "release_pos_x", "release_pos_z", "release_pos_y", "pitch_type"])
             .loc[lambda d: (d["at_bat_number"] == at_bat_number) & (d["pitch_number"].isin(pitch_numbers))]

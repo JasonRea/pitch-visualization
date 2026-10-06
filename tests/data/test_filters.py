@@ -1,5 +1,6 @@
 from pitchviz.data.filters import (
     EVENT_MAP,
+    PITCH_DESCRIPTION_MAP,
     pitches_filter,
     pitches_filter_vs_left,
     pitches_filter_vs_right,
@@ -84,6 +85,20 @@ def test_pitches_filter_by_at_bat_keeps_batter_column(outing_df):
     assert result["batter"].nunique() == 1
 
 
+def test_pitches_filter_by_at_bat_keeps_non_final_pitches_despite_null_events(outing_df):
+    # Regression: events is NaN by design on every pitch but the one that
+    # ends the at-bat — a blanket dropna() would wrongly drop the others.
+    filt = pitches_filter_by_at_bat(1)
+    result = filt(outing_df)
+
+    assert "release_speed" in result.columns
+    assert "description" in result.columns
+    assert "events" in result.columns
+    assert len(result) == 3  # at-bat 1 is a 3-pitch walk in the fixture
+    assert result["events"].isna().sum() == 2
+    assert result["events"].notna().sum() == 1
+
+
 def test_pitches_filter_by_at_bat_accepts_custom_label(outing_df):
     filt = pitches_filter_by_at_bat(1, label="vs Corbin Carroll — Inning 1")
 
@@ -99,6 +114,14 @@ def test_pitches_filter_by_pitch_numbers_filters_to_selected_pitches(outing_df):
     assert list(result["pitch_number"]) == [1, 3]
     assert "batter" in result.columns
     assert result["batter"].nunique() == 1
+    assert "release_speed" in result.columns
+    assert "description" in result.columns
+    assert result["events"].isna().tolist() == [True, False]  # pitch 1: no outcome, pitch 3: the walk
+
+
+def test_pitch_description_map_covers_real_statcast_descriptions():
+    for raw in ["ball", "called_strike", "hit_into_play", "foul", "swinging_strike", "swinging_strike_blocked"]:
+        assert raw in PITCH_DESCRIPTION_MAP
 
 
 def test_event_map_covers_common_outcomes():

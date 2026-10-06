@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from pitchviz.data.filters import pitches_filter, pitches_filter_by_at_bat
-from pitchviz.render.builder import position, abs_strike_zone, VizualizationBuilder
+from pitchviz.render.builder import position, abs_strike_zone, pitch_annotation_text, VizualizationBuilder
 
 
 def test_position_at_t_zero_is_release_point():
@@ -58,6 +58,31 @@ def test_resolve_strike_zone_uses_batter_height_for_single_batter_df(monkeypatch
 
     assert builder._sz_bottom == pytest.approx(1.62)
     assert builder._sz_top == pytest.approx(3.21)
+
+
+def test_pitch_annotation_text_mid_at_bat_has_no_outcome_line():
+    # Real values: at-bat 1, pitch 1 of the fixture outing (not the final pitch).
+    text = pitch_annotation_text({
+        "release_speed": 95.2,
+        "pitch_name": "Split-Finger",
+        "description": "called_strike",
+        "events": None,
+    })
+
+    assert text == "Split-Finger · 95.2 mph\nCalled Strike"
+    assert "Outcome" not in text
+
+
+def test_pitch_annotation_text_final_pitch_includes_outcome_line():
+    # Real values: at-bat 1, pitch 3 of the fixture outing (ends the at-bat).
+    text = pitch_annotation_text({
+        "release_speed": 94.3,
+        "pitch_name": "Split-Finger",
+        "description": "hit_into_play",
+        "events": "single",
+    })
+
+    assert text == "Split-Finger · 94.3 mph\nIn Play\nOutcome: Single"
 
 
 def test_resolve_strike_zone_keeps_default_for_multi_batter_df(monkeypatch, outing_df):

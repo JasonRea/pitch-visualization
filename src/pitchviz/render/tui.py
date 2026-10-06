@@ -162,8 +162,22 @@ def _format_pitch_choice(p: dict) -> str:
     return f"Pitch {p['pitch_number']}: {name} - {velo} - {p['description']}"
 
 
+def _ask_clear_between_pitches() -> bool:
+    answer = questionary.confirm(
+        "Clear the zone between each pitch?", default=False, style=STYLE,
+    ).ask()
+    if answer is None:
+        sys.exit(0)
+    return answer
+
+
 def _select_scope(df):
-    """Returns a (filter_fn, description, sequential) tuple, or _BACK.
+    """Returns a (filter_fn, description, sequential, clear_between_pitches)
+    tuple, or _BACK.
+
+    clear_between_pitches is only ever asked for (and meaningful) on the
+    at_bat/tunnel paths — "full outing" isn't sequential, so it's always
+    False there.
 
     Internally a small 3-step loop (mode -> at-bat -> pitches) so backing out
     of the pitch checkbox returns to the at-bat list, and backing out of the
@@ -195,7 +209,7 @@ def _select_scope(df):
             if mode is _BACK:
                 return _BACK
             if mode == "full":
-                return pitches_filter, "Full outing", False
+                return pitches_filter, "Full outing", False, False
             i += 1
             continue
 
@@ -240,7 +254,12 @@ def _select_scope(df):
 
             if mode == "at_bat":
                 label = f"vs {batter_label} — Inning {at_bat['inning']}"
-                return pitches_filter_by_at_bat(ab_choice, label=label), f"At-Bat #{ab_choice}", True
+                return (
+                    pitches_filter_by_at_bat(ab_choice, label=label),
+                    f"At-Bat #{ab_choice}",
+                    True,
+                    _ask_clear_between_pitches(),
+                )
 
             i += 1  # tunnel mode continues on to pitch selection
             continue
@@ -259,7 +278,12 @@ def _select_scope(df):
             if not pitch_choices:
                 i -= 1
                 continue
-            return pitches_filter_by_pitch_numbers(ab_choice, pitch_choices), f"Tunnel view (AB #{ab_choice})", True
+            return (
+                pitches_filter_by_pitch_numbers(ab_choice, pitch_choices),
+                f"Tunnel view (AB #{ab_choice})",
+                True,
+                _ask_clear_between_pitches(),
+            )
 
 
 def _select_camera():
@@ -345,7 +369,12 @@ def run_tui() -> None:
             if scope is _BACK:
                 i -= 1
                 continue
-            results["filt"], results["description"], results["sequential"] = scope
+            (
+                results["filt"],
+                results["description"],
+                results["sequential"],
+                results["clear_between_pitches"],
+            ) = scope
             i += 1
             continue
 
@@ -386,7 +415,11 @@ def run_tui() -> None:
     if builder._axes is None:
         console.print("[red]No pitches to render for this selection.[/red]")
         sys.exit(1)
-    scene_class = builder.buildm_pitches(sequential=results["sequential"], camera=camera)
+    scene_class = builder.buildm_pitches(
+        sequential=results["sequential"],
+        camera=camera,
+        clear_between_pitches=results["clear_between_pitches"],
+    )
     camera_label = "Mound POV" if camera == "mound" else "Catcher POV"
     filename = f"{pitcher_name} {date} {description} ({camera_label})"
 
