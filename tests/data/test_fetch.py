@@ -1,8 +1,21 @@
+from io import BytesIO
+
 import pandas as pd
 import pytest
+from PIL import Image
 
 import pitchviz.data.fetch as fetch_module
 from pitchviz.data.fetch import pitch_data
+
+
+class _FakeImageResponse:
+    def __init__(self, content: bytes, status_code: int = 200):
+        self.content = content
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
 
 class _FakeResponse:
@@ -222,6 +235,61 @@ def test_get_pitcher_outings_wraps_lookup_failure_as_runtime_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="Pitcher not found"):
         fetch_module.get_pitcher_outings("Nobody Here", 2024)
+
+
+def test_get_pitcher_game_stats_returns_box_score_for_matching_game(monkeypatch):
+    def fake_get(url, params=None, **kwargs):
+        if params and params.get("gameType") == "P":
+            return _FakeResponse({"stats": [{"splits": []}]})
+        return _FakeResponse({"stats": [{"splits": [
+            {
+                "date": "2024-08-04", "game": {"gamePk": 745468},
+                "stat": {
+                    "inningsPitched": "6.1", "strikeOuts": 11, "baseOnBalls": 1,
+                    "hits": 2, "runs": 1, "earnedRuns": 1,
+                },
+            },
+        ]}]})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    result = fetch_module.get_pitcher_game_stats(player_id=694973, season=2024, game_pk=745468)
+
+    assert result == {
+        "innings_pitched": "6.1", "strikeouts": 11, "walks": 1,
+        "hits": 2, "runs": 1, "earned_runs": 1,
+    }
+
+
+def test_get_pitcher_game_stats_returns_none_when_game_not_found(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _FakeResponse({"stats": [{"splits": []}]}))
+
+    result = fetch_module.get_pitcher_game_stats(player_id=694973, season=2024, game_pk=999999)
+
+    assert result is None
+
+
+def test_get_player_headshot_returns_rgba_array_on_success(monkeypatch):
+    buf = BytesIO()
+    Image.new("RGB", (4, 6), color=(10, 20, 30)).save(buf, format="PNG")
+    monkeypatch.setattr("requests.get", lambda *a, **k: _FakeImageResponse(buf.getvalue()))
+
+    result = fetch_module.get_player_headshot(694973)
+
+    assert result is not None
+    assert result.shape == (6, 4, 4)  # height, width, RGBA
+
+
+def test_get_player_headshot_returns_none_on_http_failure(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _FakeImageResponse(b"", status_code=404))
+
+    assert fetch_module.get_player_headshot(1) is None
+
+
+def test_get_player_headshot_returns_none_on_unparseable_content(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: _FakeImageResponse(b"not an image"))
+
+    assert fetch_module.get_player_headshot(1) is None
 
 
 def test_get_player_names_returns_empty_dict_for_no_ids():

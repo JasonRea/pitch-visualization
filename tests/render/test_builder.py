@@ -1,8 +1,16 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from pitchviz.data.filters import pitches_filter, pitches_filter_by_at_bat
-from pitchviz.render.builder import position, abs_strike_zone, pitch_annotation_text, VizualizationBuilder
+from pitchviz.render.builder import (
+    position,
+    abs_strike_zone,
+    pitch_annotation_text,
+    box_score_line,
+    pitch_type_breakdown,
+    VizualizationBuilder,
+)
 
 
 def test_position_at_t_zero_is_release_point():
@@ -83,6 +91,99 @@ def test_pitch_annotation_text_final_pitch_includes_outcome_line():
     })
 
     assert text == "Split-Finger · 94.3 mph\nIn Play\nOutcome: Single"
+
+
+def test_box_score_line_formats_all_six_stats():
+    line = box_score_line({
+        "innings_pitched": "6.1", "strikeouts": 10, "walks": 1,
+        "hits": 2, "runs": 0, "earned_runs": 0,
+    })
+
+    assert line == "6.1 IP  10 K  1 BB  2 H  0 R  0 ER"
+
+
+def test_pitch_type_breakdown_computes_rate_stats_from_real_data(outing_df):
+    filtered = pitches_filter(outing_df)
+
+    rows = {r["pitch_type"]: r for r in pitch_type_breakdown(filtered)}
+    ff = rows["FF"]
+
+    # Hand-computed from the real fixture: 40 FF pitches, 15 in-zone (of 40
+    # with a known zone), 25 out-of-zone with 5 chased, 11 swings with 2 whiffs.
+    assert ff["count"] == 40
+    assert ff["avg_ivb"] == pytest.approx(9.639, abs=0.01)
+    assert ff["avg_hvb"] == pytest.approx(-14.214, abs=0.01)
+    assert ff["zone_pct"] == pytest.approx(37.5, abs=0.01)
+    assert ff["chase_pct"] == pytest.approx(20.0, abs=0.01)
+    assert ff["whiff_pct"] == pytest.approx(18.18, abs=0.01)
+
+
+def test_pitch_type_breakdown_handles_pitch_type_with_no_out_of_zone_pitches():
+    df = pd.DataFrame({
+        "pitch_type": ["FF", "FF"],
+        "release_speed": [97.0, 98.0],
+        "release_spin_rate": [2300, 2310],
+        "pfx_x": [-1.0, -1.1],
+        "pfx_z": [0.8, 0.9],
+        "zone": [1, 2],  # both in-zone — no out-of-zone denominator
+        "description": ["called_strike", "ball"],
+    })
+
+    rows = pitch_type_breakdown(df)
+
+    assert rows[0]["chase_pct"] is None
+    assert rows[0]["whiff_pct"] is None  # no swings either
+
+
+def test_resolve_game_summary_computes_pitch_type_breakdown_from_real_data(monkeypatch, outing_df):
+    filtered = pitches_filter(outing_df)
+    raw_df = outing_df.copy()
+    raw_df["pitcher"] = 694973
+    raw_df["game_date"] = "2024-08-04"
+    raw_df["game_pk"] = 745468
+
+    monkeypatch.setattr(
+        "pitchviz.render.builder.get_pitcher_game_stats",
+        lambda player_id, season, game_pk: {
+            "innings_pitched": "6.1", "strikeouts": 11, "walks": 2,
+            "hits": 3, "runs": 1, "earned_runs": 1,
+        },
+    )
+    monkeypatch.setattr(
+        "pitchviz.render.builder.get_player_names",
+        lambda ids: {694973: "Paul Skenes"},
+    )
+    fake_headshot = np.zeros((4, 4, 4), dtype=np.uint8)
+    monkeypatch.setattr(
+        "pitchviz.render.builder.get_player_headshot",
+        lambda player_id: fake_headshot,
+    )
+
+    builder = VizualizationBuilder()
+    builder._resolve_game_summary(raw_df, filtered, pitches_filter)
+
+    assert builder._game_summary_data is not None
+    assert builder._game_summary_data["box_score"] == {
+        "innings_pitched": "6.1", "strikeouts": 11, "walks": 2,
+        "hits": 3, "runs": 1, "earned_runs": 1,
+    }
+    assert builder._game_summary_data["pitcher_name"] == "Paul Skenes"
+    assert builder._game_summary_data["date"] == "2024-08-04"
+    assert builder._game_summary_data["headshot"] is fake_headshot
+    rows = {r["pitch_type"]: r for r in builder._game_summary_data["pitch_type_rows"]}
+    assert rows["FF"]["count"] == 40  # FF is the most-thrown pitch type (40 of 100)
+    assert rows["FF"]["name"] == "4-Seam Fastball"
+    assert rows["FF"]["avg_velo"] == pytest.approx(98.04, abs=0.01)
+
+
+def test_resolve_game_summary_skips_non_full_outing_scopes(outing_df):
+    filt = pitches_filter_by_at_bat(1)
+    filtered = filt(outing_df)
+
+    builder = VizualizationBuilder()
+    builder._resolve_game_summary(outing_df, filtered, filt)
+
+    assert builder._game_summary_data is None
 
 
 def test_resolve_strike_zone_keeps_default_for_multi_batter_df(monkeypatch, outing_df):

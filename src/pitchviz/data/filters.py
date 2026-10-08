@@ -29,6 +29,14 @@ PITCH_DESCRIPTION_MAP = {
     "hit_into_play": "In Play",
 }
 
+# Raw Statcast `description` values that count as a swing, and the subset of
+# those that are a swing-and-miss (whiff) — used for Chase%/Whiff%.
+SWING_DESCRIPTIONS = {
+    "swinging_strike", "swinging_strike_blocked", "foul", "foul_tip",
+    "hit_into_play", "foul_bunt", "missed_bunt",
+}
+WHIFF_DESCRIPTIONS = {"swinging_strike", "swinging_strike_blocked", "missed_bunt"}
+
 # -----FILTERS----------
 
 def pitches_filter(df: pd.DataFrame):
@@ -36,10 +44,12 @@ def pitches_filter(df: pd.DataFrame):
             "vx0", "vy0", "vz0",
             "ax", "ay", "az",
             "release_pos_x", "release_pos_z", "release_pos_y",
-            "pitch_type",
+            "pitch_type", "release_speed", "release_spin_rate",
+            "description", "zone", "pfx_x", "pfx_z",
         ]
 
-    return df[columns_to_keep].dropna()
+    return df[columns_to_keep].dropna(subset=["vx0", "vy0", "vz0", "ax", "ay", "az",
+                                                "release_pos_x", "release_pos_z", "release_pos_y", "pitch_type"])
 
 def pitches_filter_vs_left(df: pd.DataFrame):
     columns_to_keep = [

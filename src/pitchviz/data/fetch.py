@@ -1,10 +1,13 @@
 import math
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import BytesIO
 
 import pybaseball
 import pandas as pd
+import numpy as np
 import requests
+from PIL import Image
 from rapidfuzz import fuzz, process
 
 pybaseball.cache.enable()
@@ -163,6 +166,35 @@ def get_pitcher_outings(pitcher_name: str, season: int) -> list[dict]:
         o["final"] = final_statuses.get(o["game_pk"], True)
 
     return sorted(outings, key=lambda o: o["date"])
+
+
+def get_pitcher_game_stats(player_id: int, season: int, game_pk: int) -> dict | None:
+    """Official box-score pitching line (innings pitched/strikeouts/walks/
+    hits/runs/earned runs) for one specific game.
+
+    These are scorer-determined stats (earned runs especially) that aren't
+    reliably derivable from raw Statcast pitch rows, so this pulls MLB's own
+    already-computed `stat` object off the matching gameLog split — the same
+    data get_pitcher_outings() already fetches per-game, just not discarded
+    this time. Returns None if no split matches game_pk (e.g. the game isn't
+    found in either the regular-season or postseason log).
+    """
+    regular_splits = _fetch_game_log_splits(player_id, season)
+    postseason_splits = _fetch_game_log_splits(player_id, season, game_type="P")
+
+    for split in (*regular_splits, *postseason_splits):
+        if split.get("game", {}).get("gamePk") == game_pk:
+            stat = split.get("stat", {})
+            return {
+                "innings_pitched": stat.get("inningsPitched"),  # already "N.1"/"N.2" for partial innings
+                "strikeouts":  stat.get("strikeOuts"),
+                "walks":       stat.get("baseOnBalls"),
+                "hits":        stat.get("hits"),
+                "runs":        stat.get("runs"),
+                "earned_runs": stat.get("earnedRuns"),
+            }
+
+    return None
 
 
 def _release_point(x0, y0, z0, vx0, vy0, vz0, ax, ay, az, target_y):
@@ -326,6 +358,32 @@ def get_player_heights(player_ids: list[int]) -> dict[int, float]:
             feet, inches = match.groups()
             heights[p["id"]] = int(feet) * 12 + int(inches)
     return heights
+
+
+def get_player_headshot(player_id: int) -> np.ndarray | None:
+    """Fetch a player's MLB headshot as an RGBA numpy array, ready for
+    Manim's ImageMobject (confirmed it accepts a numpy array directly, no
+    temp file needed).
+
+    Ported from this project's pre-refactor fetch_data.py (commit e50f7bd),
+    which returned a PIL Image from the same URL — re-verified live before
+    porting. Returns None on any failure (bad status, unparseable image,
+    network error) rather than raising, so a headshot hiccup never blocks
+    a render.
+    """
+    url = (
+        "https://img.mlbstatic.com/mlb-photos/image/upload/"
+        "d_people:generic:headshot:67:current.png/w_640,q_auto:best/"
+        f"v1/people/{player_id}/headshot/silo/current.png"
+    )
+    try:
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        image = Image.open(BytesIO(response.content)).convert("RGBA")
+        return np.array(image)
+    except Exception:
+        return None
+
 
 def get_game_ids(date: str) -> list[int]:
     url = f"https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={date}"

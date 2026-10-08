@@ -4,14 +4,35 @@ import numpy as np
 from scipy.optimize import brentq
 from manim import *
 
-from pitchviz.config import PITCH_COLORS
-from pitchviz.data.fetch import pitch_data, daily_pitches, get_player_heights
+from pitchviz.config import PITCH_COLORS, PITCH_NAMES
+from pitchviz.data.fetch import (
+    pitch_data,
+    daily_pitches,
+    get_player_heights,
+    get_pitcher_game_stats,
+    get_player_names,
+    get_player_headshot,
+)
 from pitchviz.data.filters import (
+    pitches_filter,
     pitches_filter_vs_left,
     pitches_filter_vs_right,
     EVENT_MAP,
     PITCH_DESCRIPTION_MAP,
+    SWING_DESCRIPTIONS,
+    WHIFF_DESCRIPTIONS,
 )
+
+IN_ZONE = set(range(1, 10))  # Statcast zones 1-9 are the in-zone 3x3 grid
+
+# Depth (ft from home plate's back tip) of the strike zone's own plane —
+# pitch endpoints are solved for this same y so a pitch's dot always lands
+# exactly where it crosses the zone, not where it crosses the plate's tip.
+ZONE_PLATE_Y = 8.5 / 12
+
+# Real MLB baseball radius (~2.9in diameter), so endpoint dots render at
+# true scale rather than an arbitrary fixed size.
+BALL_RADIUS_FT = 2.9 / 12 / 2
 
 # TODO Specify specific pitch types, vs rhb, lhb, vs particular batters (IN DEVELOPMENT)
 
@@ -61,6 +82,60 @@ def pitch_annotation_text(meta: dict) -> str:
 
     return "\n".join(lines)
 
+
+def box_score_line(box_score: dict) -> str:
+    """One-line box score summary: innings pitched/strikeouts/walks/hits/
+    runs/earned runs, formatted as "value LABEL" (e.g. "4 K  3 BB").
+    innings_pitched is already "N.1"/"N.2" style for partial innings (MLB's
+    own gameLog format), passed through as-is."""
+    return (
+        f"{box_score['innings_pitched']} IP  {box_score['strikeouts']} K  {box_score['walks']} BB  "
+        f"{box_score['hits']} H  {box_score['runs']} R  {box_score['earned_runs']} ER"
+    )
+
+
+def pitch_type_breakdown(df: pd.DataFrame) -> list[dict]:
+    """Per-pitch-type arsenal stats for the full-outing summary table:
+    count, average velocity/spin/break, and the standard rate stats
+    Zone% / Chase% / Whiff% — sorted most-thrown first.
+
+    Zone% = in-zone pitches / pitches with a known zone.
+    Chase% = swings on out-of-zone pitches / out-of-zone pitches.
+    Whiff% = swings-and-misses / swings (not all pitches — distinct from SwStr%).
+    Any rate with a zero denominator (e.g. no out-of-zone pitches of a type)
+    comes back None rather than dividing by zero.
+    """
+    rows = []
+    for pitch_type, group in df.groupby("pitch_type"):
+        zone = group["zone"]
+        description = group["description"]
+
+        known_zone = zone.notna()
+        in_zone = known_zone & zone.isin(IN_ZONE)
+        out_zone = known_zone & ~zone.isin(IN_ZONE)
+        swings = description.isin(SWING_DESCRIPTIONS)
+        whiffs = description.isin(WHIFF_DESCRIPTIONS)
+
+        out_zone_count = int(out_zone.sum())
+        swing_count = int(swings.sum())
+
+        rows.append({
+            "pitch_type": pitch_type,
+            "name":       PITCH_NAMES.get(pitch_type, pitch_type),
+            "count":      len(group),
+            "avg_velo":   group["release_speed"].mean() if group["release_speed"].notna().any() else None,
+            "avg_spin":   group["release_spin_rate"].mean() if group["release_spin_rate"].notna().any() else None,
+            "avg_ivb":    group["pfx_z"].mean() * 12 if group["pfx_z"].notna().any() else None,
+            "avg_hvb":    group["pfx_x"].mean() * 12 if group["pfx_x"].notna().any() else None,
+            "zone_pct":   (in_zone.sum() / known_zone.sum() * 100) if known_zone.any() else None,
+            "chase_pct":  (swings[out_zone].sum() / out_zone_count * 100) if out_zone_count else None,
+            "whiff_pct":  (whiffs.sum() / swing_count * 100) if swing_count else None,
+        })
+
+    rows.sort(key=lambda r: r["count"], reverse=True)
+    return rows
+
+
 class VizualizationBuilder:
     """
     Builder for Manim pitch trajectory visualizations.
@@ -92,6 +167,10 @@ class VizualizationBuilder:
         # size an ABS zone to.
         self._sz_bottom: float = 12 / 12
         self._sz_top: float = (12 + 20) / 12
+        # Full-outing-only summary (box score + pitch-arsenal breakdown),
+        # shown once the trajectory tails fade in a non-sequential render.
+        # {"box_score": dict | None, "pitch_type_rows": list[dict]} or None.
+        self._game_summary_data: dict | None = None
 
     # ------------------------------------------------------------------
     # Builder steps
@@ -117,6 +196,57 @@ class VizualizationBuilder:
         if height_inches is not None:
             self._sz_bottom, self._sz_top = abs_strike_zone(height_inches)
 
+    def _resolve_game_summary(self, raw_df: pd.DataFrame, filtered_df: pd.DataFrame, filter) -> None:
+        """Builds the full-outing summary (box score + pitch-arsenal
+        breakdown) shown once the trajectory tails fade — only meaningful
+        for the whole-outing scope (pitches_filter), not at-bat/tunnel/
+        handedness-split renders, which don't represent a complete game.
+        """
+        if filter is not pitches_filter or filtered_df.empty:
+            return
+
+        player_id = None
+        date = None
+        try:
+            player_id = int(raw_df["pitcher"].iloc[0])
+            date = str(raw_df["game_date"].iloc[0])
+        except Exception:
+            pass
+
+        box_score = None
+        try:
+            game_pk = int(raw_df["game_pk"].iloc[0])
+            season = int(date[:4])
+            box_score = get_pitcher_game_stats(player_id, season, game_pk)
+        except Exception:
+            pass
+
+        pitcher_name = None
+        try:
+            pitcher_name = get_player_names([player_id]).get(player_id)
+        except Exception:
+            pass
+
+        headshot = None
+        try:
+            headshot = get_player_headshot(player_id)
+        except Exception:
+            pass
+
+        try:
+            pitch_type_rows = pitch_type_breakdown(filtered_df)
+        except Exception:
+            pitch_type_rows = []
+
+        if box_score or pitch_type_rows:
+            self._game_summary_data = {
+                "box_score": box_score,
+                "pitch_type_rows": pitch_type_rows,
+                "pitcher_name": pitcher_name,
+                "date": date,
+                "headshot": headshot,
+            }
+
     def load_pitches(self, date: str, pitcher: str, filter: Callable[[pd.DataFrame], pd.DataFrame]) -> "VizualizationBuilder":
         """Fetch Statcast data and build the parametric curves"""
 
@@ -126,11 +256,12 @@ class VizualizationBuilder:
         self._colors.clear()
         self._pitch_meta.clear()
 
-        df = pitch_data(start_dt=date, pitcher=pitcher)
+        raw_df = pitch_data(start_dt=date, pitcher=pitcher)
 
         # Apply filter
-        df = filter(df)
+        df = filter(raw_df)
         self._resolve_strike_zone(df)
+        self._resolve_game_summary(raw_df, df, filter)
 
         if filter is pitches_filter_vs_left:
             self._filter_label = "vs Left"
@@ -172,7 +303,7 @@ class VizualizationBuilder:
 
             try:
                 t_end = brentq(
-                    lambda t: position(t, x0, y0, z0, vx0, vy0, vz0, ax, ay, az)[1],
+                    lambda t: position(t, x0, y0, z0, vx0, vy0, vz0, ax, ay, az)[1] - ZONE_PLATE_Y,
                     0, 1.5,
                 )
             except ValueError:
@@ -222,8 +353,10 @@ class VizualizationBuilder:
         self._colors.clear()
         self._pitch_meta.clear()
 
+        raw_df = df
         df = filter(df)
         self._resolve_strike_zone(df)
+        self._resolve_game_summary(raw_df, df, filter)
 
         if filter is pitches_filter_vs_left:
             self._filter_label = "vs Left"
@@ -269,7 +402,7 @@ class VizualizationBuilder:
 
             try:
                 t_end = brentq(
-                    lambda t: position(t, x0, y0, z0, vx0, vy0, vz0, ax, ay, az)[1],
+                    lambda t: position(t, x0, y0, z0, vx0, vy0, vz0, ax, ay, az)[1] - ZONE_PLATE_Y,
                     0, 1.5,
                 )
             except ValueError:
@@ -344,6 +477,7 @@ class VizualizationBuilder:
         filter_label_color = self._filter_label_color
         sz_bottom_ft = self._sz_bottom
         sz_top_ft    = self._sz_top
+        game_summary_data = self._game_summary_data
 
         class PitchTrajectory(ThreeDScene):
             def construct(self):
@@ -392,7 +526,7 @@ class VizualizationBuilder:
                     width=sz_width * scale,
                     height=(sz_top - sz_bottom) * scale,
                 )
-                strike_zone.move_to(axes.c2p(0, (8.5/12), sz_mid_z))
+                strike_zone.move_to(axes.c2p(0, ZONE_PLATE_Y, sz_mid_z))
                 strike_zone.rotate(90 * DEGREES, axis=RIGHT)
                 strike_zone.set_stroke(WHITE, 4)
                 strike_zone.set_fill(opacity=0)
@@ -520,7 +654,7 @@ class VizualizationBuilder:
                         pitches, end_times, end_points, colors, pitch_meta,
                     ):
                         self.play(Create(pitch, run_time=t_end))
-                        dot = Dot3D(point=end_point, radius=0.05, color=color)
+                        dot = Dot3D(point=end_point, radius=BALL_RADIUS_FT * scale, color=color)
                         self.add(dot)
                         accumulated_pitches.append(pitch)
                         accumulated_dots.append(dot)
@@ -557,18 +691,166 @@ class VizualizationBuilder:
                     ]
                     self.play(*animations)
                     for end_point, color in zip(end_points, colors):
-                        self.add(Dot3D(point=end_point, radius=0.05, color=color))
+                        self.add(Dot3D(point=end_point, radius=BALL_RADIUS_FT * scale, color=color))
                     self.wait()
                 else:
-                    # Animate all pitches simultaneously
+                    # Animate all pitches simultaneously, then — full-outing
+                    # scope only — fade the trajectory tails and show the
+                    # box-score / pitch-arsenal summary while the
+                    # pitch-location dots stay on screen.
                     animations = [
                         Create(pitch, run_time=t_end)
                         for pitch, t_end in zip(pitches, end_times)
                     ]
                     self.play(*animations)
                     for end_point, color in zip(end_points, colors):
-                        self.add(Dot3D(point=end_point, radius=0.05, color=color))
-                    self.wait()
+                        self.add(Dot3D(point=end_point, radius=BALL_RADIUS_FT * scale, color=color))
+
+                    if game_summary_data:
+                        self.wait(0.5)
+                        self.play(*[FadeOut(pitch) for pitch in pitches])
+
+                        box_score = game_summary_data.get("box_score")
+                        pitch_rows = game_summary_data.get("pitch_type_rows") or []
+                        pitcher_name = game_summary_data.get("pitcher_name")
+                        date = game_summary_data.get("date")
+                        headshot = game_summary_data.get("headshot")
+
+                        def _pct(v):
+                            return f"{v:.0f}%" if v is not None else "-"
+
+                        def _num(v, fmt):
+                            return format(v, fmt) if v is not None else "-"
+
+                        # Build everything flat (normal 2D layout, top
+                        # element first) and rotate it into a billboard as
+                        # one rigid group at the end — the same "stand it
+                        # up" trick the filter label and pitch annotations
+                        # use.
+                        top_level = []  # header text + box-score text + the table
+                        reveal_steps = []  # finer-grained top-to-bottom reveal order
+
+                        if pitcher_name or date:
+                            header_bits = [b for b in (pitcher_name, date) if b]
+                            header_text = Text("   ".join(header_bits), color=WHITE, weight=BOLD).scale(0.3)
+                            top_level.append(header_text)
+                            reveal_steps.append(header_text)
+
+                        if box_score:
+                            box_score_text = Text(box_score_line(box_score), color=WHITE).scale(0.28)
+                            top_level.append(box_score_text)
+                            reveal_steps.append(box_score_text)
+
+                        table = None
+                        if pitch_rows:
+                            headers = ["Pitch", "Count", "Velo", "Spin", "IVB", "HVB", "Zone%", "Chase%", "Whiff%"]
+                            table_data = [
+                                [
+                                    r["name"],
+                                    str(r["count"]),
+                                    _num(r["avg_velo"], ".1f"),
+                                    _num(r["avg_spin"], ".0f"),
+                                    _num(r["avg_ivb"], ".1f"),
+                                    _num(r["avg_hvb"], ".1f"),
+                                    _pct(r["zone_pct"]),
+                                    _pct(r["chase_pct"]),
+                                    _pct(r["whiff_pct"]),
+                                ]
+                                for r in pitch_rows
+                            ]
+                            table = Table(
+                                table_data,
+                                col_labels=[Text(h, weight=BOLD) for h in headers],
+                                include_outer_lines=True,
+                                element_to_mobject=Text,
+                                h_buff=0.3,
+                                v_buff=0.25,
+                            )
+                            table.scale(0.17)
+                            # Color each row's pitch-name cell to match its
+                            # trajectories/dots (row 1 is the header; column
+                            # 1 is "Pitch").
+                            for i, r in enumerate(pitch_rows):
+                                table.get_entries((i + 2, 1)).set_color(
+                                    ManimColor(PITCH_COLORS.get(r["pitch_type"], PITCH_COLORS["UN"]))
+                                )
+
+                            # Build the per-cell black fill polygons now,
+                            # while the table is still flat/unrotated.
+                            # table.get_cell() derives each cell's rectangle
+                            # from the table's internal row/column metrics
+                            # and does NOT account for any rotation already
+                            # applied to the table — building these after
+                            # summary.rotate() runs (further below) produces
+                            # degenerate, near-zero-height rectangles that
+                            # don't actually cover their row, which is why
+                            # pitch dots could still show through. Attaching
+                            # them as children of `table` here means they
+                            # inherit the same move_to/rotate/stretch as
+                            # everything else in `summary`.
+                            n_rows, n_cols = len(pitch_rows) + 1, len(headers)
+                            cell_fills = VGroup()
+                            for r in range(1, n_rows + 1):
+                                for c in range(1, n_cols + 1):
+                                    cell = table.get_cell((r, c))
+                                    cell.set_fill(BLACK, opacity=1)
+                                    cell.set_stroke(width=0)
+                                    cell_fills.add(cell)
+                            table.add(cell_fills)
+
+                            top_level.append(table)
+
+                        info_block = VGroup(*top_level).arrange(DOWN, aligned_edge=LEFT, buff=0.3)
+
+                        headshot_img = None
+                        if headshot is not None:
+                            headshot_img = ImageMobject(headshot)
+                            headshot_img.height = info_block.height
+                            summary = Group(headshot_img, info_block).arrange(RIGHT, aligned_edge=UP, buff=0.5)
+                        else:
+                            summary = info_block
+
+                        summary.move_to(axes.c2p(0, 0, sz_top + 1.7))
+                        summary.rotate(90 * DEGREES, axis=RIGHT)
+                        if camera == "mound":
+                            # Same left-right mirror fix as the filter label
+                            # and pitch annotations — flat text/image, no
+                            # backface culling, so the two mirrors (this one
+                            # and the mound camera's own) cancel out.
+                            summary.stretch(-1, 0)
+
+                        # Pitch dots/trajectories default to z_index=0;
+                        # ThreeDCamera draws non-shaded mobjects (which is
+                        # everything here — Dot3D included, it doesn't set
+                        # shade_in_3d) in z_index order regardless of actual
+                        # 3D depth or add() order, so this alone guarantees
+                        # the whole summary — including the table — always
+                        # renders in front of the pitches, never obstructed.
+                        summary.set_z_index(10)
+
+                        if headshot_img is not None:
+                            reveal_steps.insert(0, headshot_img)
+
+                        for step in reveal_steps:
+                            self.play(FadeIn(step, rate_func=smooth), run_time=0.9)
+
+                        if table is not None:
+                            # Draw the empty table (grid lines + the black
+                            # cell fills built earlier, above) right before
+                            # filling in the stats; each row's text (header
+                            # first) then fades in on top of it, one row at
+                            # a time. FadeIn with lag_ratio=0 (rather than
+                            # Create) so all ~90 cell/line pieces appear
+                            # together instead of drawing in one-by-one.
+                            table_shell = VGroup(cell_fills, *table.get_horizontal_lines(), *table.get_vertical_lines())
+                            self.play(FadeIn(table_shell, lag_ratio=0, rate_func=smooth), run_time=0.35)
+
+                            for row in table.get_rows():
+                                self.play(FadeIn(row, rate_func=smooth), run_time=0.9)
+
+                        self.wait(3)
+                    else:
+                        self.wait()
 
         return PitchTrajectory
 
